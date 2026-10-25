@@ -1,5 +1,9 @@
 "use client";
+<<<<<<< HEAD
 import { CirclePlus, CpuAi, Database, LayoutDashboard, RotateCcwClock, Settings } from "lucide-react";
+=======
+import { LayoutDashboard,CirclePlus,Database, CpuAi,RotateCcwClock,Settings } from "lucide-react";
+>>>>>>> origin/feature/frontend-setup
 
 import { useState } from "react";
 
