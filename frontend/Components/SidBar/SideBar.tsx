@@ -1,5 +1,9 @@
 "use client";
+<<<<<<< HEAD
+import { CirclePlus, CpuAi, Database, LayoutDashboard, RotateCcwClock, Settings } from "lucide-react";
+=======
 import { LayoutDashboard,CirclePlus,Database, CpuAi,RotateCcwClock,Settings } from "lucide-react";
+>>>>>>> origin/feature/frontend-setup
 
 import { useState } from "react";
 
@@ -115,7 +119,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
           <ul className="space-y-2 font-medium">
             <li>
               <a
-                href="#"
+                href="/"
                 className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
               <LayoutDashboard className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
@@ -125,7 +129,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             </li>
             <li>
               <a
-                href="#"
+                href="/NewRun"
                 className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                <CirclePlus className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
@@ -178,7 +182,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
         </div>
       </aside>
 
-      <div className="p-4 sm:ml-64 mt-14">
+     {/* <div className="p-4 sm:ml-64 mt-14">
         <div className="p-4 border-1 border-default border-dashed rounded-base">
           <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="flex items-center justify-center h-24 rounded-base bg-neutral-secondary-soft">
@@ -460,7 +464,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             </div>
           </div>
         </div>
-      </div>
+      </div>*/}
     </>
   );
 }
