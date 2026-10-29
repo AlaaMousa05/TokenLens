@@ -18,6 +18,14 @@ class ModelSpec(BaseModel):
     cached_input_price_per_mtok: Decimal | None = Field(default=None, description="Cached input price; None if no discount.")
     pricing_notes: str = Field(description="Caveats, e.g. tiered or promotional pricing.")
     is_active: bool = Field(description="Selectable for new evaluation runs.")
+    reasoning_level: str | None = Field(
+        default=None,
+        description="Per-model reasoning/thinking effort; adapter maps it to the provider's vocabulary. None uses the adapter default.",
+    )
+    request_timeout_seconds: float | None = Field(
+        default=None,
+        description="Per-model request deadline in seconds; slow models need longer. None uses the adapter default.",
+    )
 
 
 class PriceSnapshot(BaseModel):

@@ -1,7 +1,4 @@
-"""Single source of truth for which models TokenLens compares and which model judges them.
 
-Changing a model's identifier or price means editing this file only.
-"""
 
 from decimal import Decimal
 
@@ -75,16 +72,21 @@ _GEMINI_JUDGE = ModelSpec(
         "per-model figures): roughly 10 RPM, 1500 RPD."
     ),
     is_active=True,
+    # gemini-3.8-flash supports low/medium/high only — it rejects "minimal"
+    # with HTTP 400. Lives here per-model so a future Gemini model that does
+    # support "minimal" is a new row, not an adapter code change.
+    reasoning_level="low",
+    # The judge thinks before answering and has been observed taking ~35s, well
+    # past the compared models' short default; give it a generous deadline.
+    request_timeout_seconds=120.0,
 )
 
 _COMPARED_MODELS: tuple[ModelSpec, ...] = (_GPT_OSS_120B, _QWEN3_27B, _GPT_OSS_20B)
 
 
 def get_compared_models() -> list[ModelSpec]:
-    """Active models eligible for a comparison run. Never includes the judge."""
     return [model for model in _COMPARED_MODELS if model.is_active]
 
 
 def get_judge_model() -> ModelSpec:
-    """The model that grades comparison runs, kept out of get_compared_models()."""
     return _GEMINI_JUDGE
