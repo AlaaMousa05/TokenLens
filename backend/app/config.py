@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
 
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
+    groq_api_key: str | None = None
+    nvidia_api_key: str | None = None
     google_api_key: str | None = None
 
 
