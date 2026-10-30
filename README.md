@@ -39,7 +39,7 @@ comments):
 - `DATABASE_URL`, `REDIS_URL` — full connection strings read directly by
   `backend`/`worker` via `app/config.py`. These point at the `postgres`
   and `redis` service names, not `localhost`.
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — LLM provider
+- `GROQ_API_KEY`, `NVIDIA_API_KEY`, `GOOGLE_API_KEY` — LLM provider
   credentials. Passed to `backend` and `worker` only, via `env_file: .env`
   in `docker-compose.yml` — `frontend` never receives this file, so a key
   can't leak into a browser bundle.
