@@ -1,10 +1,10 @@
 "use client";
 import SideBar from "@/Components/SidBar/SideBar";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Play, UploadCloud, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Play, RotateCcw, UploadCloud, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 type InputMode = "prompt" | "dataset"; // Define the available input modes
-const panel = "rounded-xl border border-[#1b2750] bg-[#0c1530] p-5";
+const panel = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-5";
 const label = "mb-1.5 block text-sm font-medium text-slate-300";
 const field = "w-full rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0]";
 // Define the maximum allowed dataset rows and file size
@@ -33,7 +33,6 @@ type ModelInfo = {
   outputPricePerMtok: number | null;
   contextWindow?: number;
   isActive: boolean;
-  isJudgeEligible: boolean;
 };
 
 type Rubric = {
@@ -43,27 +42,30 @@ type Rubric = {
 };
 type SavedDataset = { id: string; name: string; itemCount: number };
 
+// type for the paginated /datasets response (backend returns item_count, not itemCount)
+type ApiDataset = { id: string; name: string; item_count: number };
+
+// backend sends prices as Decimal -> JSON string (e.g. "3.0000"), so allow string here
 type ApiModel = {
   id: string;
   provider: string;
   display_name?: string;
   displayName?: string;
-  input_price_per_mtok?: number | null;
-  output_price_per_mtok?: number | null;
-  inputPricePerMtok?: number | null;
-  outputPricePerMtok?: number | null;
+  input_price_per_mtok?: number | string | null;
+  output_price_per_mtok?: number | string | null;
+  inputPricePerMtok?: number | string | null;
+  outputPricePerMtok?: number | string | null;
   context_window?: number;
   contextWindow?: number;
   is_active?: boolean;
   isActive?: boolean;
-  is_judge_eligible?: boolean;
-  isJudgeEligible?: boolean;
 };
 
 type DatasetItem = { input: string; expected_output?: string };
 
 type UploadState = {
   fileName: string;
+  file: File;
   rows: number;
   avgInputTokens: number;
   errors: string[];
@@ -111,11 +113,13 @@ async function validateFile(file: File): Promise<UploadState> {
   if (file.size > MAX_BYTES) errors.push("File size must not exceed 5 MB.");
 
   if (errors.length > 0) {
-    return { fileName: file.name, rows: 0, avgInputTokens: 0, errors, items: [] };
+    return { fileName: file.name, file, rows: 0, avgInputTokens: 0, errors, items: [] };
   }
   // Read the file contents and remove empty lines
   const content = await file.text();
   const lines = content.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const totalRows =
+  extension === "csv" ? Math.max(0, lines.length - 1) : lines.length;
   if (lines.length === 0) errors.push("The file is empty.");
   if (extension === "jsonl") {
     lines.forEach((line, index) => {
@@ -157,7 +161,9 @@ async function validateFile(file: File): Promise<UploadState> {
     }
   }
   // Check the maximum row limit and ensure that valid data exists
-  if (items.length > MAX_ROWS) errors.push(`Dataset cannot exceed ${MAX_ROWS} rows.`);
+  if (totalRows > MAX_ROWS) {
+  errors.push(`Dataset cannot exceed ${MAX_ROWS} rows.`);
+}
   if (items.length === 0 && errors.length === 0) errors.push("Dataset contains no valid questions.");
 
   const averageCharacters =
@@ -165,7 +171,8 @@ async function validateFile(file: File): Promise<UploadState> {
   // Return the validation results, including file information, errors, and parsed items
   return {
     fileName: file.name,
-    rows: items.length,
+    file,
+    rows: totalRows,
     avgInputTokens: Math.ceil(averageCharacters / 4),
     errors: errors.slice(0, 10),
     items,
@@ -174,33 +181,51 @@ async function validateFile(file: File): Promise<UploadState> {
 
 /*API Configuration*/
 // Get the backend API base URL from environment variables
-// Use /api as the default URL if no environment variable is configured
-const API = process.env.NEXT_PUBLIC_API_URL ?? "/api";
+// default changed from "/api" to the backend address (backend has no /api prefix)
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+//build the Authorization header from the saved login token
+// The backend uses Bearer tokens, not cookies. Login page must do: localStorage.setItem("token", access_token)
+const authHeaders = (): HeadersInit => {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 // Send a GET request to the API and return the response as JSON
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`, { credentials: "include" });
+  //replaced `credentials: "include"` with the Authorization header
+  const response = await fetch(`${API}${path}`, { headers: authHeaders() });
+  //clearer message when the token is missing/expired
+  if (response.status === 401) throw new Error("Please log in again.");
   if (!response.ok) throw new Error(`Failed to load ${path}`); // Throw an error if the API request fails
   return response.json();
 }
 
+//extract a readable message from the backend's error response
+// FastAPI "detail" can be a string, an array (422 validation) or { errors: [] } (file upload)
+type ApiError = { detail?: string | { msg: string }[] | { errors?: string[] } };
+function errorMessage(data: ApiError | null, fallback: string) {
+  const d = data?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map((e) => e.msg).join(", ");
+  if (d && "errors" in d && Array.isArray(d.errors)) return d.errors.join(", ");
+  return fallback;
+}
+
 /*API Data Normalization*/
+//convert Decimal strings from the backend ("3.0000") into numbers
+const toNum = (v: unknown) => (v == null ? null : Number(v));
+
 // Convert API model data into the standardized format used by the frontend
 function normalizeModel(model: ApiModel): ModelInfo {
   return {
     id: model.id,
     provider: model.provider,
     displayName: model.display_name ?? model.displayName ?? model.id,
-    inputPricePerMtok:
-      model.input_price_per_mtok ?? model.inputPricePerMtok ?? null,
-    outputPricePerMtok:
-      model.output_price_per_mtok ?? model.outputPricePerMtok ?? null,
+    inputPricePerMtok: toNum(model.input_price_per_mtok ?? model.inputPricePerMtok),
+    outputPricePerMtok: toNum(model.output_price_per_mtok ?? model.outputPricePerMtok),
     contextWindow: model.context_window ?? model.contextWindow,
     isActive: model.is_active ?? model.isActive ?? true,
-    isJudgeEligible:
-      model.is_judge_eligible ??
-      model.isJudgeEligible ??
-      false,
   };
 }
 /*Main Component*/
@@ -262,6 +287,7 @@ export default function NewRunPage() {
   const [judgeInstructions, setJudgeInstructions] = useState("");
 
   // Model names must always be hidden from the Judge (FR4.4)
+  // (not sent to the backend yet; the backend has no hide_model_names field)
   const hideNames = true;
 
   // Control whether answer order is swapped during evaluation
@@ -306,16 +332,23 @@ export default function NewRunPage() {
       setLoading(true);
       setApiError("");
       try { // Send three API requests in parallel
+        // new endpoints/shapes
+        //   - "/models?active=true" -> "/models" (non-admin users only get active models anyway)
+        //   - "/rubrics"  -> "/rubrics?page=1&size=100"  (returns { items, page, size, total })
+        //   - "/datasets" -> "/datasets?page=1&size=100" (returns { items, page, size, total })
         const [modelsData, rubricsData, datasetsData] = await Promise.all([
-          getJson<ApiModel[]>("/models?active=true"),
-          getJson<Rubric[]>("/rubrics"),
-          getJson<SavedDataset[]>("/datasets"),
+          getJson<ApiModel[]>("/models"),
+          getJson<{ items: Rubric[] }>("/rubrics?page=1&size=100"),
+          getJson<{ items: ApiDataset[] }>("/datasets?page=1&size=100"),
         ]);
         // Ensure the component is still mounted before updating its state
         if (!mounted) return;
         setModels(modelsData.map(normalizeModel));// Store the retrieved data and normalize the model objects
-        setRubrics(rubricsData);
-        setDatasets(datasetsData);
+        setRubrics(rubricsData.items); // items (was: rubricsData)
+        // items + map item_count -> itemCount (was: setDatasets(datasetsData))
+        setDatasets(
+          datasetsData.items.map((d) => ({ id: d.id, name: d.name, itemCount: d.item_count }))
+        );
       } catch (err) {
         if (!mounted) return;
         setApiError(err instanceof Error ? err.message : "Could not load project data.");
@@ -333,10 +366,8 @@ export default function NewRunPage() {
   /*Derived Data*/
   // Filter and return only active models for model selection
   const activeModels = useMemo(() => models.filter((m) => m.isActive), [models]);
-  // Get only active models that are approved for Judge evaluation.
-  const judgeModels = models.filter(
-    (model) => model.isActive && model.isJudgeEligible
-  );
+  // Temporarily use all active models because the API does not provide Judge eligibility yet.
+  const judgeModels = activeModels;
   /*Input Validation*/
 
   // Find the selected saved dataset
@@ -365,7 +396,7 @@ export default function NewRunPage() {
     hasInput &&
     modelCountOk &&
     !!rubricId &&
-    !!judgeModelId &&
+    judgeModels.some((model) => model.id === judgeModelId) &&
     !submitting;
 
 
@@ -394,12 +425,14 @@ export default function NewRunPage() {
     // Double the judge calls when answer order swapping is enabled
     const judgeCalls = calls * (swapOrder ? 2 : 1);
 
-    // Check whether pricing information is available for all selected models
-    const hasPrices = selectedModels.every(
-      (m) =>
-        m.inputPricePerMtok !== null &&
-        m.outputPricePerMtok !== null
-    );
+    // Check whether at least one model is selected and all selected models have pricing
+    const hasPrices =
+      selectedModels.length > 0 &&
+      selectedModels.every(
+        (m) =>
+          m.inputPricePerMtok !== null &&
+          m.outputPricePerMtok !== null
+      );
 
     // Calculate the estimated comparison cost
     const comparisonCost = hasPrices
@@ -437,24 +470,9 @@ export default function NewRunPage() {
     swapOrder,
   ]);
   /*Run Submission*/
-  // Build the request body that will be sent to the backend
-  const buildPayload = () => ({
-    name: runName.trim() || `Run ${new Date().toLocaleString()}`,
-    source: mode === "prompt" ? "prompt" : upload ? "upload" : "saved_dataset",
-    system_prompt: systemPrompt.trim() || null,
-    prompt: mode === "prompt" ? prompt.trim() : null,
-    dataset_id: mode === "dataset" && !upload ? datasetId : null,
-    items: mode === "dataset" && upload ? upload.items : null,
-    model_ids: selected,
-    judge_model_id: judgeModelId,
-    rubric_id: rubricId,
-    judge_instructions: judgeInstructions.trim() || null,
-    repeats,
-    temperature,
-    max_output_tokens: maxTokens,
-    swap_order: swapOrder,
-    hide_model_names: hideNames,
-  });
+  // The backend does not accept prompt / items / system_prompt / max_output_tokens /
+  // judge_instructions / hide_model_names. It only accepts dataset_id, so the payload
+  // is now built inline inside startRun after the dataset is created.
 
   // Submit the Run creation request to the backend
   const startRun = async () => {
@@ -465,17 +483,66 @@ export default function NewRunPage() {
     setSuccess("");
 
     try {
+      const name = runName.trim() || `Run ${new Date().toLocaleString()}`;
+      if (selected.length < MIN_MODELS || selected.length > MAX_MODELS) {
+        throw new Error("Please select between 2 and 8 models.");
+      }
+
+      if (new Set(selected).size !== selected.length) {
+        throw new Error("Duplicate models are not allowed.");
+      }
+      if (name.length > 150) {
+        throw new Error("Run name cannot exceed 150 characters.");
+      }
+      let finalDatasetId = datasetId;
+
+      // Step 1a: Single Prompt -> POST /datasets/prompt (creates a dataset with one item)
+      if (mode === "prompt") {
+        const res = await fetch(`${API}/datasets/prompt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ name, input: prompt.trim(), system_prompt: systemPrompt.trim() }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(errorMessage(data, "Could not save the prompt."));
+        finalDatasetId = data.id;
+
+        // Step 1b: Uploaded file -> POST /datasets/upload (multipart/form-data)
+      } else if (upload) {
+        const form = new FormData();
+        form.append("name", name);
+        form.append("file", upload.file);
+        const res = await fetch(`${API}/datasets/upload`, {
+          method: "POST",
+          headers: authHeaders(), // no Content-Type here: the browser sets the multipart boundary
+          body: form,
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(errorMessage(data, "Could not upload the dataset."));
+        finalDatasetId = data.id;
+      }
+      // Step 1c: saved dataset -> nothing to create, datasetId is already set
+
+      // Step 2: create the Run with the dataset id
       const response = await fetch(`${API}/runs`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          name,
+          dataset_id: finalDatasetId,
+          rubric_id: rubricId,
+          model_ids: selected,
+          judge_model_id: judgeModelId,
+          repeats,
+          temperature,
+          swap_order: swapOrder,
+        }),
       });
 
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data?.detail ?? "Could not start the run.");
+        throw new Error(errorMessage(data, "Could not start the run."));
       }
 
       if (!data?.id) {
@@ -487,6 +554,97 @@ export default function NewRunPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setSubmitting(false);
+    }
+  };
+  /*Draft Management*/
+  // Save the current New Run configuration to localStorage
+  const saveDraft = () => {
+    const draft = {
+      mode,
+      systemPrompt,
+      prompt,
+      runName,
+      temperature,
+      maxTokens,
+      repeats,
+      selected,
+      rubricId,
+      judgeModelId,
+      judgeInstructions,
+      swapOrder,
+      datasetId,
+    };
+
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      setSuccess("Draft saved successfully.");
+      setError("");
+    } catch {
+      setError("Could not save the draft.");
+    }
+  };
+
+  // Restore the previously saved New Run configuration
+  const restoreDraft = () => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+
+      if (!saved) {
+        setError("No saved draft found.");
+        return;
+      }
+
+      const draft = JSON.parse(saved);
+
+      // Restore the input configuration
+      setMode(draft.mode ?? "prompt");
+      setSystemPrompt(draft.systemPrompt ?? "");
+      setPrompt(draft.prompt ?? "");
+      setRunName(draft.runName ?? "");
+
+      // Restore the Run settings
+      setTemperature(draft.temperature ?? 0.2);
+      setMaxTokens(draft.maxTokens ?? 1024);
+      setRepeats(draft.repeats ?? 3);
+
+      // Restore only valid selected model IDs
+      const validSelectedModels = Array.isArray(draft.selected)
+        ? draft.selected.filter(
+          (id: string) =>
+            typeof id === "string" &&
+            activeModels.some((model) => model.id === id)
+        )
+        : [];
+
+      setSelected(validSelectedModels);
+
+      // Restore the rubric and Judge model if they are still available
+      setRubricId(
+        rubrics.some((rubric) => rubric.id === draft.rubricId)
+          ? draft.rubricId
+          : ""
+      );
+
+      setJudgeModelId(
+        judgeModels.some((model) => model.id === draft.judgeModelId)
+          ? draft.judgeModelId
+          : ""
+      );
+
+      setJudgeInstructions(draft.judgeInstructions ?? "");
+      setSwapOrder(draft.swapOrder ?? false);
+
+      // Restore the selected saved dataset
+      setDatasetId(draft.datasetId ?? "");
+
+      // Uploaded files are not stored in localStorage
+      setUpload(null);
+      if (fileRef.current) fileRef.current.value = "";
+
+      setSuccess("Draft restored successfully.");
+      setError("");
+    } catch {
+      setError("Could not restore the saved draft.");
     }
   };
   /*ui*/
@@ -501,22 +659,46 @@ export default function NewRunPage() {
               Configure your test, select models and run comparisons.
             </p>
           </div>
-          {/* Mode selection buttons */}
-          <div role="tablist" className="flex gap-2 text-sm">
-            {(["prompt", "dataset"] as const).map((m) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={mode === m}
-                onClick={() => setMode(m)}
-                className={`rounded-lg px-4 py-2 font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6b7dff] ${mode === m
-                  ? "bg-[#3347e0] text-white"
-                  : "border border-[#223062] bg-[#0c1530] text-slate-300 hover:bg-[#101c3f]"
-                  }`}
-              >
-                {m === "prompt" ? "Single Prompt" : "Upload Dataset"}
-              </button>
-            ))}
+          {/* Draft Management and Mode Selection Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+
+            {/* Restore a previously saved draft */}
+            <button
+              onClick={restoreDraft}
+              disabled={loading || !!apiError}
+              className="flex items-center gap-2 rounded-lg border border-[#2a3a78] px-4 py-2.5 text-sm hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCcw size={15} />
+              Restore Draft
+            </button>
+
+            {/* Save the current configuration as a draft */}
+            <button
+              onClick={saveDraft}
+              disabled={loading}
+              className="rounded-lg border border-[#2a3a78] px-4 py-2.5 text-sm hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Save as Draft
+            </button>
+
+            {/* Mode selection buttons */}
+            <div role="tablist" className="flex gap-2 text-sm">
+              {(["prompt", "dataset"] as const).map((m) => (
+                <button
+                  key={m}
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => setMode(m)}
+                  className={`rounded-lg px-4 py-2 font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6b7dff] ${mode === m
+                    ? "bg-[#3347e0] text-white"
+                    : "border border-[#223062] bg-[#0c1530] text-slate-300 hover:bg-[#101c3f]"
+                    }`}
+                >
+                  {m === "prompt" ? "Single Prompt" : "Upload Dataset"}
+                </button>
+              ))}
+            </div>
+
           </div>
         </header>
         {/* Display a loading indicator while retrieving data from the API */}
@@ -635,7 +817,9 @@ export default function NewRunPage() {
                     id="saved-ds"
                     value={datasetId}
                     disabled={!!upload}
-                    onChange={(e) => setDatasetId(e.target.value)}
+                    onChange={(e) => {setDatasetId(e.target.value);
+                      if (e.target.value) removeFile(); // Clear the uploaded file if a saved dataset is selected
+                    }}
                     className={field}
                   >
                     <option value="">Select a dataset...</option>
@@ -670,6 +854,7 @@ export default function NewRunPage() {
                 <input
                   id="run-name"
                   value={runName}
+                  maxLength={150}
                   onChange={(e) => setRunName(e.target.value)}
                   placeholder="My comparison run"
                   className={field}
@@ -787,7 +972,7 @@ export default function NewRunPage() {
                 className={field}
               >
                 <option value="">Select a judge model...</option>
-                {judgeModels.map((m) => ( // Only show models that are eligible to be used as a Judge
+                {judgeModels.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.displayName} ({m.provider})
                   </option>
@@ -809,18 +994,6 @@ export default function NewRunPage() {
                     <option key={r.id} value={r.id}>{r.name}</option>
                   ))}
                 </select>
-              </div>
-
-              <div>
-                <label htmlFor="judge-instructions" className={label}>Judge Instructions</label>
-                <textarea
-                  id="judge-instructions"
-                  value={judgeInstructions}
-                  onChange={(e) => setJudgeInstructions(e.target.value)}
-                  rows={4}
-                  placeholder="Define the criteria used to evaluate model responses..."
-                  className={field}
-                />
               </div>
 
               <div className="flex flex-wrap gap-5 text-sm text-slate-300">

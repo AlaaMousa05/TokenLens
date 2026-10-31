@@ -15,7 +15,7 @@ export default function SideBar() {
                 data-drawer-toggle="top-bar-sidebar"
                 aria-controls="top-bar-sidebar"
                 type="button"
-                className="sm:hidden text-heading bg-transparent box-border border border-transparent hover:bg-neutral-secondary-medium focus:ring-4 focus:ring-neutral-tertiary font-medium leading-5 rounded-base text-sm p-2 focus:outline-none"
+                className="sm:hidden text-heading bg-transparent box-border border border-transparent hover:bg-[#0b132b] focus:ring-4 focus:ring-neutral-tertiary font-medium leading-5 rounded-base text-sm p-2 focus:outline-none"
               >
                 <span className="sr-only">Open sidebar</span>
                 <svg
@@ -94,10 +94,10 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
 
       <aside
         id="top-bar-sidebar"
-        className="fixed top-0 left-0 z-40 w-64 h-full transition-transform -translate-x-full sm:translate-x-0"
+        className="fixed top-0 left-0 z-40 w-64 h-full transition-transform -translate-x-full sm:translate-x-0 "
         aria-label="Sidebar"
       >
-        <div className="h-full px-3 py-4 overflow-y-auto bg-neutral-primary-soft border-e border-default">
+        <div className="h-full px-3 py-4 overflow-y-auto bg-[#0b132b]">
           <a
             href="https://flowbite.com/"
             className="flex items-center ps-2.5 mb-5"
@@ -107,15 +107,15 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
               className="h-6 me-3"
               alt="Flowbite Logo"
             />
-            <span className="self-center text-lg text-heading font-semibold whitespace-nowrap">
+            <span className="self-center text-lg text-white font-semibold whitespace-nowrap">
               LLM SandBox &<br /> Cost Profiler
             </span>
           </a>
-          <ul className="space-y-2 font-medium">
+          <ul className="space-y-2 font-medium ">
             <li>
               <a
                 href="/"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
               <LayoutDashboard className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 
@@ -125,7 +125,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             <li>
               <a
                 href="/NewRun"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
                <CirclePlus className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
 
@@ -137,7 +137,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             <li>
               <a
                 href="#"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
                  <Database className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Data Sets</span>
@@ -147,7 +147,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             <li>
               <a
                 href="#"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
                  <CpuAi className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Models</span>
@@ -156,7 +156,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             <li>
               <a
                 href="#"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
                  <RotateCcwClock className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">
@@ -167,7 +167,7 @@ className={`${isOpen ? "block" : "hidden"} absolute right-0 top-full z-50 mt-2 w
             <li>
               <a
                 href="#"
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-lg hover:bg-[#1b2750] hover:text-white group"
               >
                 <Settings className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Settings</span>
