@@ -535,6 +535,7 @@ export default function NewRunPage() {
           judge_model_id: judgeModelId,
           repeats,
           temperature,
+          max_output_tokens: maxTokens,
           swap_order: swapOrder,
         }),
       });
