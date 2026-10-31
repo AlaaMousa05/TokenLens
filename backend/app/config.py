@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     access_token_expire_minutes: int = 120
 
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
+    groq_api_key: str | None = None
+    nvidia_api_key: str | None = None
     google_api_key: str | None = None
 
 
