@@ -7,15 +7,15 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import settings
+from app.dbconfig import Base
+from app.models import entities  # noqa: F401
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# No ORM models exist yet — schema design belongs to a teammate, so
-# autogenerate has nothing to diff against until models are added here.
-target_metadata = None
+target_metadata = Base.metadata
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
