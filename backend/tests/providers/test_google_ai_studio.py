@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from evaluation.contracts import CallStatus
+from evaluation.contracts import CallStatus, CompletionOutcome
 from evaluation.providers._shared import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from evaluation.providers.google_ai_studio import _FALLBACK_THINKING_LEVEL, GoogleAIStudioClient
 from tests.providers.conftest import make_spec
@@ -50,7 +50,7 @@ async def test_usage_maps_cached_and_thinking_tokens(gemini_spec) -> None:
                     "total_input_tokens": 500,
                     "total_output_tokens": 20,
                     "total_thought_tokens": 150,
-                    "total_tokens": 970,
+                    "total_tokens": 670,
                     "total_tool_use_tokens": 0,
                 },
             },
@@ -59,12 +59,15 @@ async def test_usage_maps_cached_and_thinking_tokens(gemini_spec) -> None:
     response = await _client(handler).complete(gemini_spec, "grade this", "be fair", 0.0, 200)
 
     assert response.status == CallStatus.ok
+    assert response.completion_outcome == CompletionOutcome.normal
     assert response.output_text == "The verdict is model A."
-    assert response.input_tokens == 500
-    assert response.output_tokens == 20
     assert response.cached_tokens == 300
+    assert response.input_tokens == 200
+    assert response.output_tokens == 20
     assert response.reasoning_tokens == 150
     assert response.tokens_estimated is False
+    assert response.input_tokens + response.cached_tokens == 500
+    assert response.output_tokens == 20
 
 
 async def test_no_usage_falls_back_to_estimated_tokens(gemini_spec) -> None:
@@ -100,6 +103,7 @@ async def test_http_429_returns_failed_response_without_raising(gemini_spec) -> 
     response = await _client(handler).complete(gemini_spec, "grade this", None, 0.0, 200)
 
     assert response.status == CallStatus.failed
+    assert response.completion_outcome is None
     assert "429" in response.error_message
     assert response.attempts == 1
 
@@ -174,9 +178,74 @@ async def test_request_timeout_falls_back_when_spec_omits_it() -> None:
     assert captured[0].extensions["timeout"]["read"] == DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 
+async def test_incomplete_status_is_ok_with_truncated_outcome_and_real_tokens(gemini_spec) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "v1_test",
+                "model": "gemini-3.8-flash",
+                "object": "interaction",
+                "status": "incomplete",
+                "steps": [{"type": "model_output", "content": [{"type": "text", "text": "partial"}]}],
+                "usage": {
+                    "total_input_tokens": 5,
+                    "total_output_tokens": 200,
+                    "total_cached_tokens": 0,
+                    "total_thought_tokens": 0,
+                    "total_tokens": 205,
+                },
+            },
+        )
+
+    response = await _client(handler).complete(gemini_spec, "grade this", None, 0.0, 200)
+
+    assert response.status == CallStatus.ok
+    assert response.completion_outcome == CompletionOutcome.truncated
+    assert response.output_text == "partial"
+    assert response.input_tokens == 5
+    assert response.output_tokens == 200
+
+
+async def test_unknown_status_maps_to_other_outcome(gemini_spec) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "v1_test",
+                "model": "gemini-3.8-flash",
+                "object": "interaction",
+                "status": "requires_action",
+                "steps": [{"type": "model_output", "content": [{"type": "text", "text": "x"}]}],
+                "usage": {
+                    "total_input_tokens": 3,
+                    "total_output_tokens": 1,
+                    "total_cached_tokens": 0,
+                    "total_thought_tokens": 0,
+                    "total_tokens": 4,
+                },
+            },
+        )
+
+    response = await _client(handler).complete(gemini_spec, "grade this", None, 0.0, 200)
+
+    assert response.status == CallStatus.ok
+    assert response.completion_outcome == CompletionOutcome.other
+
+
 async def test_malformed_response_returns_failed_response(gemini_spec) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"unexpected": "shape"})
+
+    response = await _client(handler).complete(gemini_spec, "grade this", None, 0.0, 200)
+
+    assert response.status == CallStatus.failed
+    assert "Malformed response" in response.error_message
+
+
+async def test_2xx_non_json_body_is_a_failure_not_a_raise(gemini_spec) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>oops</html>", headers={"content-type": "text/html"})
 
     response = await _client(handler).complete(gemini_spec, "grade this", None, 0.0, 200)
 

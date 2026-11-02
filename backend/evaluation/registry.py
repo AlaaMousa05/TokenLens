@@ -1,4 +1,8 @@
+"""Single source of truth for the compared models and the judge.
 
+Every model identifier, price, timeout, and reasoning level lives here;
+adding or retuning a model is a row change in this file, nowhere else.
+"""
 
 from decimal import Decimal
 
@@ -38,20 +42,19 @@ _QWEN3_27B = ModelSpec(
 )
 
 _GPT_OSS_20B = ModelSpec(
-    provider="nvidia_nim",
+    provider="groq",
     model_name="openai/gpt-oss-20b",
-    display_name="GPT-OSS 20B (NVIDIA NIM)",
+    display_name="GPT-OSS 20B (Groq)",
     context_window=131072,
     input_price_per_mtok=Decimal("0.05"),
     output_price_per_mtok=Decimal("0.20"),
     cached_input_price_per_mtok=None,
     pricing_notes=(
-        "Priced at Groq's published rate card for this model, the same "
-        "reference host used for the other compared models even though it "
-        "is actually served by NVIDIA NIM here. Deliberately placed on NIM "
-        "rather than Groq so it does not compete for Groq's shared daily "
-        "token budget. Served by NVIDIA NIM's free tier: 40 RPM, 10000 RPD, "
-        "per model."
+        "Priced at Groq's published rate card, the same reference host used "
+        "for the other compared models. Moved here from NVIDIA NIM, which was "
+        "unreliable in live testing (timeouts and latency swings); Groq "
+        "succeeded on every call. Served by Groq's free tier: 30 RPM, 1000 "
+        "RPD, 200K tokens/day shared across all models on the account."
     ),
     is_active=True,
 )
@@ -85,8 +88,10 @@ _COMPARED_MODELS: tuple[ModelSpec, ...] = (_GPT_OSS_120B, _QWEN3_27B, _GPT_OSS_2
 
 
 def get_compared_models() -> list[ModelSpec]:
+    """Active models eligible for a comparison run; never includes the judge."""
     return [model for model in _COMPARED_MODELS if model.is_active]
 
 
 def get_judge_model() -> ModelSpec:
+    """The scoring model, kept out of the compared set to avoid a conflict of interest."""
     return _GEMINI_JUDGE

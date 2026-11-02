@@ -2,9 +2,8 @@ import asyncio
 import hashlib
 import random
 from datetime import datetime, timezone
-from decimal import Decimal
 
-from evaluation.contracts import CallStatus, ModelClient, ModelResponse, ModelSpec, PriceSnapshot
+from evaluation.contracts import CallStatus, CompletionOutcome, ModelClient, ModelResponse, ModelSpec, PriceSnapshot
 
 
 class MockModelClient(ModelClient):
@@ -67,6 +66,7 @@ class MockModelClient(ModelClient):
             latency_ms=latency_ms,
             attempts=1,
             status=CallStatus.ok,
+            completion_outcome=CompletionOutcome.normal,
             tokens_estimated=True,
             prices_snapshot=prices_snapshot,
         )
