@@ -1,4 +1,7 @@
-
+"""Helpers shared by the provider adapters: price snapshotting, latency timing,
+token estimation, timeout resolution, and the failure-response shape every
+adapter returns instead of raising.
+"""
 
 import time
 from datetime import datetime, timezone
