@@ -22,15 +22,15 @@ _PROMPT = "What is the capital of France?"
 _MAX_OUTPUT_TOKENS = 16
 _TEMPERATURE = 0.0
 
-# Reasoning tokens bill at the output rate and would dominate the cost of
-# a call this small, so every call uses the lowest effort the OpenAI-
-# compatible providers accept.
-_LOWEST_REASONING_EFFORT = "low"
+# Reasoning tokens bill at the output rate and would dominate the cost of a
+# call this small, so the check forces the lowest level every provider here
+# accepts. "low" is both a valid OpenAI-compatible effort and the minimum
+# gemini-3.8-flash allows.
+_SMOKE_REASONING_LEVEL = "low"
 
-# Gemini's thinking tokens count against max_output_tokens, and the judge's
-# per-model thinking level (registry: reasoning_level) is the lowest its model
-# accepts. The judge still gets a larger budget than the compared models',
-# since 16 tokens is too tight once the raw answer shares room with thinking.
+# Gemini's thinking tokens count against max_output_tokens, so the judge gets a
+# larger budget than the compared models' — 16 tokens is too tight once the raw
+# answer shares room with thinking.
 _JUDGE_MAX_OUTPUT_TOKENS = 32
 
 _ROW_FORMAT = (
@@ -42,16 +42,16 @@ _ROW_FORMAT = (
 
 async def _call_one(spec: ModelSpec) -> ModelResponse:
     is_judge = spec.provider == "google_ai_studio"
+    cheap_spec = spec.model_copy(update={"reasoning_level": _SMOKE_REASONING_LEVEL})
 
     client = resolve_client(
-        spec,
+        cheap_spec,
         groq_api_key=settings.groq_api_key,
         nvidia_api_key=settings.nvidia_api_key,
         google_api_key=settings.google_api_key,
-        reasoning_effort=_LOWEST_REASONING_EFFORT,
     )
     return await client.complete(
-        spec,
+        cheap_spec,
         prompt=_PROMPT,
         system_prompt=None,
         temperature=_TEMPERATURE,

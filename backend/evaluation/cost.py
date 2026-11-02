@@ -19,7 +19,11 @@ class CallCostBreakdown:
 
 
 def compute_call_cost(response: ModelResponse) -> CallCostBreakdown:
+    """USD cost of one call from its disjoint token buckets and frozen price snapshot.
 
+    Cached tokens fall back to the input price when the snapshot has no
+    cached rate; reasoning tokens are billed at the output rate.
+    """
     snapshot = response.prices_snapshot
     cached_price = snapshot.cached_input_price_per_mtok
     if cached_price is None:
