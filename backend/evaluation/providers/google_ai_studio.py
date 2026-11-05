@@ -24,6 +24,7 @@ from evaluation.providers._shared import (
     estimate_tokens,
     failed_response,
     resolve_timeout_seconds,
+    status_error_message,
 )
 
 _API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
@@ -97,7 +98,7 @@ class GoogleAIStudioClient(ModelClient):
                 f"Request to {spec.provider} timed out after {timeout_seconds}s.",
             )
         except httpx.HTTPStatusError as error:
-            return failed_response(elapsed_ms(started_at), prices_snapshot, _status_error_message(spec, error))
+            return failed_response(elapsed_ms(started_at), prices_snapshot, status_error_message(spec, error))
         except httpx.HTTPError as error:
             return failed_response(elapsed_ms(started_at), prices_snapshot, f"Request to {spec.provider} failed: {error}.")
 
@@ -105,13 +106,6 @@ class GoogleAIStudioClient(ModelClient):
             return _parse_success(response.json(), prompt, system_prompt, latency_ms, prices_snapshot)
         except (KeyError, IndexError, TypeError, ValueError) as error:
             return failed_response(latency_ms, prices_snapshot, f"Malformed response from {spec.provider}: {error}.")
-
-
-def _status_error_message(spec: ModelSpec, error: httpx.HTTPStatusError) -> str:
-    status_code = error.response.status_code
-    if status_code == 429:
-        return f"{spec.provider} rate limit (429) hit for {spec.model_name}."
-    return f"{spec.provider} returned HTTP {status_code} for {spec.model_name}: {error.response.text[:200]}"
 
 
 def _parse_success(
