@@ -6,6 +6,8 @@ adapter returns instead of raising.
 import time
 from datetime import datetime, timezone
 
+import httpx
+
 from evaluation.contracts import CallStatus, ModelResponse, ModelSpec, PriceSnapshot
 
 _ESTIMATED_TOKENS_PER_WORD = 1.3
@@ -53,3 +55,11 @@ def failed_response(latency_ms: int, prices_snapshot: PriceSnapshot, error_messa
         tokens_estimated=False,
         prices_snapshot=prices_snapshot,
     )
+
+
+def status_error_message(spec: ModelSpec, error: httpx.HTTPStatusError) -> str:
+    """Human-readable error for a non-2xx response, flagging 429 so the retry layer can match it."""
+    status_code = error.response.status_code
+    if status_code == 429:
+        return f"{spec.provider} rate limit (429) hit for {spec.model_name}."
+    return f"{spec.provider} returned HTTP {status_code} for {spec.model_name}: {error.response.text[:200]}"
