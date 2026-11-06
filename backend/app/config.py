@@ -15,9 +15,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     access_token_expire_minutes: int = 120
 
-    groq_api_key: str | None = None
-    nvidia_api_key: str | None = None
     google_api_key: str | None = None
+    azure_api_key: str | None = None
 
 
 settings = Settings()

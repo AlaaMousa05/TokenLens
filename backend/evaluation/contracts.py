@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 class ModelSpec(BaseModel):
     """One model under comparison, with its pricing and per-call settings."""
 
-    provider: str = Field(description="Adapter key, e.g. 'groq' or 'google_ai_studio'.")
+    provider: str = Field(description="Adapter key, e.g. 'azure_ai_foundry' or 'google_ai_studio'.")
     model_name: str = Field(description="API-facing model identifier.")
     display_name: str = Field(description="Human-readable name for the UI.")
     context_window: int = Field(description="Max input plus output tokens.")
@@ -23,6 +23,10 @@ class ModelSpec(BaseModel):
     cached_input_price_per_mtok: Decimal | None = Field(default=None, description="Cached input price; None if no discount.")
     pricing_notes: str = Field(description="Caveats, e.g. tiered or promotional pricing.")
     is_active: bool = Field(description="Selectable for new evaluation runs.")
+    is_judge_eligible: bool = Field(
+        default=False,
+        description="Whether this model may score others. Judge-eligible models never enter the compared set of a run.",
+    )
     reasoning_level: str | None = Field(
         default=None,
         description="Per-model reasoning/thinking effort; adapter maps it to the provider's vocabulary. None uses the adapter default.",
@@ -30,6 +34,14 @@ class ModelSpec(BaseModel):
     request_timeout_seconds: float | None = Field(
         default=None,
         description="Per-model request deadline in seconds; slow models need longer. None uses the adapter default.",
+    )
+    uses_max_completion_tokens: bool = Field(
+        default=False,
+        description="Send the output-token cap as 'max_completion_tokens'; newer deployments reject the legacy 'max_tokens'.",
+    )
+    accepts_custom_temperature: bool = Field(
+        default=True,
+        description="Whether a non-default temperature is allowed; when False the adapter omits it and the provider default applies.",
     )
 
 
@@ -97,6 +109,10 @@ class ModelResponse(BaseModel):
         ),
     )
     error_message: str | None = Field(default=None, description="Set only when status is failed.")
+    retry_after_seconds: float | None = Field(
+        default=None,
+        description="Normalized provider backpressure hint (from a Retry-After header); the retry layer waits this long before the next attempt. None when the provider gave none.",
+    )
     tokens_estimated: bool = Field(description="True if counts are local estimates, not provider-reported.")
     prices_snapshot: PriceSnapshot
 
