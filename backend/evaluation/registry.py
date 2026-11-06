@@ -89,11 +89,16 @@ _LLAMA_33_70B = ModelSpec(
         "Models', Global Standard; no cached-input meter. Chosen as judge over "
         "gpt-6.1-sol because it accepts temperature 0 (reproducible scores) and "
         "is from a family unrelated to all three compared models (no "
-        "same-family bias). Meta family."
+        "same-family bias). Meta family. JSON MODE: this deployment emits "
+        "trailing commas without response_format and silently ignores "
+        "json_schema (accepted but not enforced, verified by live probe), but "
+        "honors json_object — so the judge requests json_object for "
+        "structurally valid output and the parser stays strict."
     ),
     is_active=True,
     is_judge_eligible=True,
     request_timeout_seconds=120.0,
+    response_format="json_object",
 )
 
 _GEMINI_JUDGE = ModelSpec(

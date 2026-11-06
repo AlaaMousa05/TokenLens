@@ -126,6 +126,8 @@ def _build_payload(
         payload["temperature"] = temperature
     if spec.reasoning_level is not None:
         payload["reasoning_effort"] = spec.reasoning_level
+    if spec.response_format is not None:
+        payload["response_format"] = {"type": spec.response_format}
     return payload
 
 

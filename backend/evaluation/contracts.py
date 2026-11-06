@@ -43,6 +43,10 @@ class ModelSpec(BaseModel):
         default=True,
         description="Whether a non-default temperature is allowed; when False the adapter omits it and the provider default applies.",
     )
+    response_format: str | None = Field(
+        default=None,
+        description="Provider response_format type to request, e.g. 'json_object' for guaranteed-valid JSON; None sends none.",
+    )
 
 
 class PriceSnapshot(BaseModel):
