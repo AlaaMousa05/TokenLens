@@ -1,69 +1,68 @@
-"""Manual smoke check: one real call to each compared model plus the judge.
+"""Manual smoke check: one call to each compared model and each judge.
 
-Not a test — it reads real API keys from settings and hits the live
-APIs, to prove the keys and model names work. Run manually:
+Not a test — it reads real API keys from settings and hits the live APIs,
+to prove the keys and model names work. Calls go through the execution
+layer with retries on and caching off, so the attempts column shows how
+much retrying recovers. Run manually:
 
     python -m scripts.smoke_check_providers
-
-One call per model, no repeats, no retries, no loops beyond iterating
-the four registered models.
 """
 
 import asyncio
 from decimal import Decimal
 
 from app.config import settings
-from evaluation.contracts import ModelResponse, ModelSpec
+from evaluation.contracts import ModelClient, ModelResponse, ModelSpec
 from evaluation.cost import compute_call_cost
+from evaluation.execution import InMemoryCache, ProviderConcurrency, RetryPolicy, build_execution_client
+from evaluation.execution.caching_client import CacheStats
 from evaluation.providers.resolver import resolve_client
-from evaluation.registry import get_compared_models, get_judge_model
+from evaluation.registry import get_compared_models, list_judge_models
 
 _PROMPT = "What is the capital of France?"
 _MAX_OUTPUT_TOKENS = 16
 _TEMPERATURE = 0.0
 
-# Reasoning tokens bill at the output rate and would dominate the cost of a
-# call this small, so the check forces the lowest level every provider here
-# accepts. "low" is both a valid OpenAI-compatible effort and the minimum
-# gemini-3.8-flash allows.
-_SMOKE_REASONING_LEVEL = "low"
-
-# Gemini's thinking tokens count against max_output_tokens, so the judge gets a
-# larger budget than the compared models' — 16 tokens is too tight once the raw
-# answer shares room with thinking.
-_JUDGE_MAX_OUTPUT_TOKENS = 32
+# Reasoning and thinking tokens count against the output budget, so judges get a
+# larger one — 16 tokens is too tight once a reasoning model shares the budget
+# between its thinking and the raw answer.
+_JUDGE_MAX_OUTPUT_TOKENS = 256
 
 _ROW_FORMAT = (
-    "{display_name:<28} {status:<7} {latency_ms:>7} "
+    "{display_name:<28} {status:<7} {outcome:<10} att={attempts:<2} {latency_ms:>8} "
     "in={input_tokens:<5} out={output_tokens:<5} cached={cached_tokens:<5} "
     "reasoning={reasoning_tokens:<5} estimated={tokens_estimated:<5} cost=${cost}"
 )
 
 
-async def _call_one(spec: ModelSpec) -> ModelResponse:
-    is_judge = spec.provider == "google_ai_studio"
-    cheap_spec = spec.model_copy(update={"reasoning_level": _SMOKE_REASONING_LEVEL})
+def _build_client() -> ModelClient:
+    execution = build_execution_client(
+        resolve=lambda spec: resolve_client(
+            spec,
+            google_api_key=settings.google_api_key,
+            azure_api_key=settings.azure_api_key,
+        ),
+        concurrency=ProviderConcurrency(),
+        cache_backend=InMemoryCache(),
+        cache_stats=CacheStats(),
+        retry_policy=RetryPolicy(),
+    )
+    return execution.select(use_cache=False)
 
-    client = resolve_client(
-        cheap_spec,
-        groq_api_key=settings.groq_api_key,
-        nvidia_api_key=settings.nvidia_api_key,
-        google_api_key=settings.google_api_key,
-    )
-    return await client.complete(
-        cheap_spec,
-        prompt=_PROMPT,
-        system_prompt=None,
-        temperature=_TEMPERATURE,
-        max_output_tokens=_JUDGE_MAX_OUTPUT_TOKENS if is_judge else _MAX_OUTPUT_TOKENS,
-    )
+
+async def _call_one(client: ModelClient, spec: ModelSpec) -> ModelResponse:
+    max_output_tokens = _JUDGE_MAX_OUTPUT_TOKENS if spec.is_judge_eligible else _MAX_OUTPUT_TOKENS
+    return await client.complete(spec, _PROMPT, None, _TEMPERATURE, max_output_tokens)
 
 
 def _print_row(spec: ModelSpec, response: ModelResponse, cost: Decimal) -> None:
+    outcome = response.completion_outcome.value if response.completion_outcome is not None else "-"
     print(
         _ROW_FORMAT.format(
             display_name=spec.display_name,
             status=response.status.value,
+            outcome=outcome,
+            attempts=response.attempts,
             latency_ms=f"{response.latency_ms}ms",
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
@@ -78,18 +77,14 @@ def _print_row(spec: ModelSpec, response: ModelResponse, cost: Decimal) -> None:
 
 
 async def main() -> None:
-    specs = [*get_compared_models(), get_judge_model()]
+    client = _build_client()
+    specs = [*get_compared_models(), *list_judge_models()]
 
     total_tokens = 0
     total_cost = Decimal("0")
 
     for spec in specs:
-        try:
-            response = await _call_one(spec)
-        except Exception as error:  # belt-and-suspenders: adapters never raise, but don't let one bad model stop the run
-            print(f"{spec.display_name:<28} crashed: {error}")
-            continue
-
+        response = await _call_one(client, spec)
         breakdown = compute_call_cost(response)
         total_tokens += (
             response.input_tokens + response.output_tokens + response.cached_tokens + response.reasoning_tokens
