@@ -1,12 +1,373 @@
-import React from 'react'
+"use client";
 
-export default function page() {
+import SideBar from "@/Components/SidBar/SideBar";
+import { ClipboardList, Database, Info, Lock, Save, Sliders, User, } from "lucide-react";
+import React, { useState } from "react";
+
+const panelClass ="rounded-xl border border-[#1b2750] bg-[#0b132b] p-6 text-slate-200 shadow-lg";
+const fieldClass ="w-full rounded-lg border border-[#223062] bg-[#091129] px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0] transition-colors";
+const labelClass = "mb-1.5 block text-xs font-medium text-slate-300";
+
+export default function SettingsPage() {
+  // 1. Profile States
+  const [name, setName] = useState("Nadeen Abu Hilweh");
+  const [email, setEmail] = useState("nadeen@example.com");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  // 2. Run Defaults States
+  const [temperature, setTemperature] = useState<number>(0.2);
+  const [maxOutputTokens, setMaxOutputTokens] = useState<string>("1024");
+  const [repeats, setRepeats] = useState<string>("1");
+  const [defaultJudgeModel, setDefaultJudgeModel] = useState("Claude 3.5 Sonnet");
+
+  // 3. Evaluation Preferences States
+  const [defaultRubric, setDefaultRubric] = useState("General Response Quality");
+  const [hideModelIdentities, setHideModelIdentities] = useState<boolean>(true);
+  const [swapAnswerOrder, setSwapAnswerOrder] = useState<boolean>(true);
+
+  // 4. Usage & Cost Controls States
+  const [monthlySpendingCap, setMonthlySpendingCap] = useState<string>("50.00");
+  const currentMonthSpend = 12.40;
+
+  // 5. Security States
+  const [password, setPassword] = useState("••••••••");
+
+  // دالة تغيير الصورة الشخصية
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const imageUrl = URL.createObjectURL(file);
+      setAvatarUrl(imageUrl);
+    }
+  };
+  const handleSaveProfile = () => {
+    alert("Profile updated successfully!");
+  };
+
+  const handleChangePassword = () => {
+    alert("Password changed successfully!");
+  };
+
+  const handleSaveAllSettings = () => {
+    alert("All settings saved successfully!");
+  };
+
   return (
-    <main className="p-6 sm:ml-64 pt-20 bg-[#070b19] min-h-screen text-white">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-2xl font-bold mb-4">Settings</h1>
-        <p className="text-gray-400 mb-6">Manage your account settings and preferences.</p>
-      </div>
-    </main>
-  )
+    <div className="min-h-screen bg-[#060b1f] text-slate-200 font-sans">
+      <SideBar />
+
+      <main className="min-w-0 px-4 pb-12 pt-20 sm:ml-64 sm:px-8">
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Settings</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              Manage your account and default evaluation preferences.
+            </p>
+          </div>
+        </header>
+
+        {/* Settings Grid */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 mb-8">
+          
+          {/* 1. Profile Section */}
+          <section className={panelClass}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400 border border-blue-500/20">
+                <User size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Profile</h2>
+                <p className="text-xs text-slate-400">Update your personal information.</p>
+              </div>
+            </div>
+
+            {/* Avatar & Change Button */}
+            <div className="flex items-center gap-5 mb-6">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#3347e0] text-xl font-bold text-white shadow-inner overflow-hidden border border-[#4a5df0]/40">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  "N"
+                )}
+              </div>
+              <label className="cursor-pointer rounded-lg border border-[#2a3a78] bg-[#091129] px-4 py-2 text-xs font-medium text-slate-200 hover:bg-white/5 transition-colors">
+                Change Avatar
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={handleAvatarChange} 
+                />
+              </label>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={labelClass}>Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className={fieldClass}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={fieldClass}
+                />
+              </div>
+
+              <div className="pt-2">
+                <button 
+                  onClick={handleSaveProfile}
+                  className="w-full rounded-lg bg-[#3347e0] py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-md"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* 2. Run Defaults Section */}
+          <section className={panelClass}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400 border border-blue-500/20">
+                <Sliders size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Run Defaults</h2>
+                <p className="text-xs text-slate-400">Set your preferred settings for new runs.</p>
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className={labelClass}>Temperature</label>
+                  <span className="rounded border border-[#223062] bg-[#091129] px-2 py-0.5 text-xs text-slate-200 font-mono">
+                    {temperature}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.1"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                  className="w-full accent-[#3347e0] cursor-pointer bg-[#091129]"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                  <span>0.0</span>
+                  <span>1.0</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Max output tokens</label>
+                  <select
+                    value={maxOutputTokens}
+                    onChange={(e) => setMaxOutputTokens(e.target.value)}
+                    className={fieldClass}
+                  >
+                    <option value="512">512</option>
+                    <option value="1024">1024</option>
+                    <option value="2048">2048</option>
+                    <option value="4096">4096</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Repeats</label>
+                  <select
+                    value={repeats}
+                    onChange={(e) => setRepeats(e.target.value)}
+                    className={fieldClass}
+                  >
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Default Judge Model</label>
+                <select
+                  value={defaultJudgeModel}
+                  onChange={(e) => setDefaultJudgeModel(e.target.value)}
+                  className={fieldClass}
+                >
+                  <option value="Claude 3.5 Sonnet">Claude 3.5 Sonnet</option>
+                  <option value="GPT-4o">GPT-4o</option>
+                  <option value="Gemini 1.5 Pro">Gemini 1.5 Pro</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          {/* 3. Evaluation Preferences Section */}
+          <section className={panelClass}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400 border border-blue-500/20">
+                <ClipboardList size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Evaluation Preferences</h2>
+                <p className="text-xs text-slate-400">Configure how your runs are evaluated.</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={labelClass}>Default scoring rubric</label>
+                <select
+                  value={defaultRubric}
+                  onChange={(e) => setDefaultRubric(e.target.value)}
+                  className={fieldClass}
+                >
+                  <option value="General Response Quality">General Response Quality</option>
+                  <option value="Code Generation & Accuracy">Code Generation & Accuracy</option>
+                  <option value="Summarization Strictness">Summarization Strictness</option>
+                </select>
+              </div>
+
+              <label className="flex items-center gap-3 cursor-pointer pt-2">
+                <input
+                  type="checkbox"
+                  checked={hideModelIdentities}
+                  onChange={(e) => setHideModelIdentities(e.target.checked)}
+                  className="h-4 w-4 rounded border-[#223062] bg-[#091129] text-[#3347e0] focus:ring-[#4a5df0]"
+                />
+                <span className="text-sm text-slate-200">Hide model identities from judge</span>
+                <Info size={14} className="text-slate-500 hover:text-slate-300" />
+              </label>
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={swapAnswerOrder}
+                  onChange={(e) => setSwapAnswerOrder(e.target.checked)}
+                  className="h-4 w-4 rounded border-[#223062] bg-[#091129] text-[#3347e0] focus:ring-[#4a5df0]"
+                />
+                <span className="text-sm text-slate-200">Swap answer order for judging</span>
+                <Info size={14} className="text-slate-500 hover:text-slate-300" />
+              </label>
+            </div>
+          </section>
+
+          {/* 4. Usage & Cost Controls Section */}
+          <section className={panelClass}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400 border border-blue-500/20">
+                <Database size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Usage & Cost Controls</h2>
+                <p className="text-xs text-slate-400">Set a monthly spending cap to keep your costs under control.</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={labelClass}>Monthly spending cap</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-sm text-slate-400">$</span>
+                  <input
+                    type="text"
+                    value={monthlySpendingCap}
+                    onChange={(e) => setMonthlySpendingCap(e.target.value)}
+                    className={`${fieldClass} pl-8`}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
+                <Info size={14} className="text-slate-500 shrink-0" />
+                <span>Provider API keys are managed securely on the server.</span>
+              </div>
+
+              <div className="pt-2">
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="text-slate-400">Current month spend</span>
+                  <span className="font-medium text-slate-200">
+                    ${currentMonthSpend.toFixed(2)} / ${monthlySpendingCap}
+                  </span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-[#091129] border border-[#223062] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#3347e0] to-[#4a5df0]"
+                    style={{
+                      width: `${(currentMonthSpend / parseFloat(monthlySpendingCap || "1")) * 100}%`,
+                    }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* 5. Security Section */}
+          <section className={`${panelClass} lg:col-span-2`}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400 border border-blue-500/20">
+                <Lock size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Security</h2>
+                <p className="text-xs text-slate-400">Keep your account safe and secure.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 items-end">
+              <div>
+                <label className={labelClass}>Password</label>
+                <div className="flex gap-3">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={fieldClass}
+                  />
+                  <button 
+                    onClick={handleChangePassword}
+                    className="shrink-0 rounded-lg border border-[#2a3a78] bg-[#091129] px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-white/5 transition-colors"
+                  >
+                    Change Password
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#1b2750] bg-[#091129]/60 p-3.5">
+                <p className="text-xs font-medium text-slate-400 mb-1">Session</p>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-sm font-semibold text-emerald-400">JWT session active</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">Your session is secure and active.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* Bottom Floating Save Button */}
+        <div className="flex justify-end">
+          <button
+            onClick={handleSaveAllSettings}
+            className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-6 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-lg shadow-blue-950/50"
+          >
+            <Save size={16} />
+            Save Settings
+          </button>
+        </div>
+      </main>
+    </div>
+  );
 }
