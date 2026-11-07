@@ -25,10 +25,19 @@ class UserPublic(BaseModel):
     created_at: datetime
 
 
+class UserProfileUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: UserRole
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    user: UserPublic
 
 
 class ErrorResponse(BaseModel):
