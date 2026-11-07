@@ -1,0 +1,21 @@
+input,expected_output,category
+"How much does the Standard plan cost and how much storage does it include?","Standard is $12 per month and includes 1 TB of storage (and up to 5 devices).",lookup
+"How many devices can I connect on the Lite plan?","The Lite plan supports 1 device.",lookup
+"When am I billed each month?","You are billed monthly on your original signup date.",lookup
+"How much storage and how many devices does Pro include?","Pro includes 5 TB of storage and supports unlimited devices.",lookup
+"If I cancel today, do I keep access until the end of the period?","Yes. After cancelling, access continues until the end of your current paid period, with no partial refund for unused days.",lookup
+"I upgraded from Lite to Pro three days ago and regret it. Can I get my money back?","The prorated upgrade charge is refundable within 14 days, so that part can be refunded. But upgrading ended the refund window on your original Lite charge, so the original charge is non-refundable.",two_rule
+"I signed up for Standard 20 days ago and downgraded to Lite yesterday. Can I get money back for the unused Standard time?","No. A downgrade only takes effect at your next billing period, so the current period stays Standard at the old rate with no proration, and at 20 days you are past the 14-day refund window.",two_rule
+"I upgraded to Pro 20 days ago and now want a refund on that upgrade charge. Possible?","No. The prorated upgrade charge has its own 14-day refund window, and 20 days have passed, so it is non-refundable.",two_rule
+"I am still within my first 14 days on Standard, but I upgraded to Pro yesterday. Can I still get the full signup refund?","No. Upgrading immediately ended the 14-day window on your original Standard charge, so it is no longer refundable. Only the prorated upgrade charge is refundable, within its own 14 days.",two_rule
+"I started on Lite 10 days ago and want to move to Standard. What will I be charged and can I still get a refund if I change my mind?","Upgrading to Standard takes effect immediately with a prorated charge for the rest of the period. That upgrade charge is refundable within 14 days, but upgrading ends the refund window on your original Lite charge.",two_rule
+"Do you offer a student discount?","The policy does not mention student discounts, so I cannot confirm one is available; please check with support.",uncovered
+"Can I pause my subscription for a month?","The policy does not cover pausing a subscription, so I cannot say that option is available.",uncovered
+"Is there a family plan?","The policy lists only Lite, Standard, and Pro and does not mention a family plan.",uncovered
+"What happens to my backed-up files if my payment fails?","The policy does not address what happens to stored files after a failed payment, so I cannot state that.",uncovered
+"Can I transfer my subscription to another person?","The policy does not cover transferring a subscription to someone else, so I cannot confirm that is possible.",uncovered
+"Since Pro comes with a 30-day refund window, can I still get a refund after 25 days?","Pro does not have a 30-day refund window. The refund window is 14 days on every plan, so after 25 days the charge is non-refundable.",false_premise
+"I am on the annual plan. Can I switch to monthly billing?","There is no annual plan. All Nimbus plans are billed monthly, so there is nothing to switch from.",false_premise
+"You charged me a cancellation fee. Can you explain it?","Nimbus does not charge a cancellation fee. You can cancel anytime and keep access until the end of your paid period.",false_premise
+"Can I get a refund?","It depends on your situation: refunds apply within 14 days of your first charge, and upgrading changes that. When were you charged, and have you upgraded since?",ambiguous
+"I want to change my plan.","Do you want to upgrade or downgrade? An upgrade takes effect immediately with a prorated charge, while a downgrade starts at your next billing period.",ambiguous
