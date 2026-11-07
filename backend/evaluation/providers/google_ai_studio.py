@@ -1,27 +1,54 @@
+"""Adapter for Google AI Studio's Interactions API, used for the judge model.
 
+generateContent is legacy for Gemini 3 generation models and hangs on
+gemini-3.8-flash; the Interactions API (POST /v1beta/interactions) is the
+current replacement.
+"""
 
 import time
 from typing import Any
 
 import httpx
 
-from evaluation.contracts import CallStatus, ModelClient, ModelResponse, ModelSpec, PriceSnapshot
+from evaluation.contracts import (
+    CallStatus,
+    CompletionOutcome,
+    ModelClient,
+    ModelResponse,
+    ModelSpec,
+    PriceSnapshot,
+)
 from evaluation.providers._shared import (
     build_price_snapshot,
     elapsed_ms,
     estimate_tokens,
     failed_response,
     resolve_timeout_seconds,
+    status_error_message,
 )
 
 _API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
-
 _FALLBACK_THINKING_LEVEL = "low"
+
+# The Interactions API exposes only a top-level status; "incomplete" is its
+# max-output-tokens cutoff, and it has no distinct content-filter status.
+_STATUS_OUTCOMES = {
+    None: CompletionOutcome.normal,
+    "completed": CompletionOutcome.normal,
+    "incomplete": CompletionOutcome.truncated,
+}
 
 
 class GoogleAIStudioClient(ModelClient):
-  
+    """Serves Gemini via the Interactions API.
+
+    Thinking tokens are reported as a count only (usage.total_thought_tokens);
+    thinking text never appears in a step's content unless thinking summaries
+    are requested, which this adapter does not do, so there is nothing to
+    strip before building output_text.
+    """
+
     def __init__(
         self,
         api_key: str | None,
@@ -43,6 +70,7 @@ class GoogleAIStudioClient(ModelClient):
         if not self._api_key:
             return failed_response(0, prices_snapshot, f"No API key configured for provider '{spec.provider}'.")
 
+        # The Interactions API has no temperature field, so temperature is ignored.
         payload: dict[str, Any] = {
             "model": spec.model_name,
             "input": prompt,
@@ -63,7 +91,6 @@ class GoogleAIStudioClient(ModelClient):
                 response = await client.post(_API_URL, json=payload, headers=headers)
             latency_ms = elapsed_ms(started_at)
             response.raise_for_status()
-            data = response.json()
         except httpx.TimeoutException:
             return failed_response(
                 elapsed_ms(started_at),
@@ -71,30 +98,25 @@ class GoogleAIStudioClient(ModelClient):
                 f"Request to {spec.provider} timed out after {timeout_seconds}s.",
             )
         except httpx.HTTPStatusError as error:
-            return failed_response(elapsed_ms(started_at), prices_snapshot, _status_error_message(spec, error))
+            return failed_response(elapsed_ms(started_at), prices_snapshot, status_error_message(spec, error))
         except httpx.HTTPError as error:
             return failed_response(elapsed_ms(started_at), prices_snapshot, f"Request to {spec.provider} failed: {error}.")
 
         try:
-            return _parse_success(data, prompt, system_prompt, latency_ms, prices_snapshot)
+            return _parse_success(response.json(), prompt, system_prompt, latency_ms, prices_snapshot)
         except (KeyError, IndexError, TypeError, ValueError) as error:
             return failed_response(latency_ms, prices_snapshot, f"Malformed response from {spec.provider}: {error}.")
 
 
-def _status_error_message(spec: ModelSpec, error: httpx.HTTPStatusError) -> str:
-    status_code = error.response.status_code
-    if status_code == 429:
-        return f"{spec.provider} rate limit (429) hit for {spec.model_name}."
-    return f"{spec.provider} returned HTTP {status_code} for {spec.model_name}: {error.response.text[:200]}"
-
-
 def _parse_success(
-    data: dict[str, Any],  
+    data: dict[str, Any],  # the provider's JSON response shape, not ours to type
     prompt: str,
     system_prompt: str | None,
     latency_ms: int,
     prices_snapshot: PriceSnapshot,
 ) -> ModelResponse:
+    completion_outcome = _STATUS_OUTCOMES.get(data.get("status"), CompletionOutcome.other)
+
     output_text = "".join(
         content_item.get("text", "")
         for step in data["steps"]
@@ -111,10 +133,11 @@ def _parse_success(
         reasoning_tokens = 0
         tokens_estimated = True
     else:
-        input_tokens = usage.get("total_input_tokens", 0)
-        output_tokens = usage.get("total_output_tokens", 0)
+        total_input_tokens = usage.get("total_input_tokens", 0)
         cached_tokens = usage.get("total_cached_tokens", 0)
+        output_tokens = usage.get("total_output_tokens", 0)
         reasoning_tokens = usage.get("total_thought_tokens", 0)
+        input_tokens = max(total_input_tokens - cached_tokens, 0)
         tokens_estimated = False
 
     return ModelResponse(
@@ -126,6 +149,7 @@ def _parse_success(
         latency_ms=latency_ms,
         attempts=1,
         status=CallStatus.ok,
+        completion_outcome=completion_outcome,
         tokens_estimated=tokens_estimated,
         prices_snapshot=prices_snapshot,
     )

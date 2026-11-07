@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.entities import ResultStatus, RunStatus
 
@@ -23,6 +23,12 @@ class RunCreateRequest(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("model_ids must contain unique values.")
         return value
+
+    @model_validator(mode="after")
+    def judge_not_in_compared_models(self) -> "RunCreateRequest":
+        if self.judge_model_id in self.model_ids:
+            raise ValueError("judge_model_id must not be one of model_ids.")
+        return self
 
 
 class RunPublic(BaseModel):
