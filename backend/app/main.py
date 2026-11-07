@@ -6,6 +6,7 @@ import redis.asyncio as redis
 from fastapi import FastAPI
 from sqlalchemy import text
 
+import app.dbconfig as dbconfig
 from app.config import settings
 from app.controllers.auth_controller import router as auth_router
 from app.controllers.dataset_controller import router as dataset_router
@@ -14,12 +15,17 @@ from app.controllers.rubric_controller import router as rubric_router
 from app.controllers.run_controller import router as run_router
 from app.controllers.user_controller import router as user_router
 from app.dbconfig import get_engine, init_all_tables
+from evaluation.judging.seed import seed_default_data
+from evaluation.registry import seed_models
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = get_engine()
     await init_all_tables()
+    async with dbconfig.SessionLocal() as session:
+        await seed_models(session)
+        await seed_default_data(session)
     yield
     await engine.dispose()
 

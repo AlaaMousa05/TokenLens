@@ -5,7 +5,21 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Index, Integer, Numeric, SmallInteger, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SqlEnum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,11 +48,18 @@ class Result(Base):
     output_text: Mapped[str] = mapped_column(Text)
     input_tokens: Mapped[int] = mapped_column(Integer)
     output_tokens: Mapped[int] = mapped_column(Integer)
+    cached_tokens: Mapped[int | None] = mapped_column(Integer)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int] = mapped_column(Integer)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    input_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    output_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    cached_input_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     status: Mapped[ResultStatus] = mapped_column(
         SqlEnum(ResultStatus, name="result_status", values_callable=enum_values)
     )
+    completion_outcome: Mapped[str | None] = mapped_column(String(32))
+    tokens_estimated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     error_message: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[int] = mapped_column(SmallInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
