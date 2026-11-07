@@ -89,11 +89,16 @@ _LLAMA_33_70B = ModelSpec(
         "Models', Global Standard; no cached-input meter. Chosen as judge over "
         "gpt-6.1-sol because it accepts temperature 0 (reproducible scores) and "
         "is from a family unrelated to all three compared models (no "
-        "same-family bias). Meta family."
+        "same-family bias). Meta family. JSON MODE: this deployment emits "
+        "trailing commas without response_format and silently ignores "
+        "json_schema (accepted but not enforced, verified by live probe), but "
+        "honors json_object — so the judge requests json_object for "
+        "structurally valid output and the parser stays strict."
     ),
     is_active=True,
     is_judge_eligible=True,
     request_timeout_seconds=120.0,
+    response_format="json_object",
 )
 
 _GEMINI_JUDGE = ModelSpec(
@@ -135,3 +140,48 @@ def list_judge_models() -> list[ModelSpec]:
 def get_default_judge() -> ModelSpec:
     """The judge used unless a run chooses another; Llama, which can be pinned to temperature 0."""
     return _DEFAULT_JUDGE
+
+
+def get_model_by_name(model_name: str) -> ModelSpec:
+    """Look up a compared or judge ModelSpec by its registry model_name; raises if none matches."""
+    for spec in (*_COMPARED_MODELS, *_JUDGE_MODELS):
+        if spec.model_name == model_name:
+            return spec
+    raise ValueError(f"No registered ModelSpec named '{model_name}'.")
+
+
+def get_all_specs() -> list[ModelSpec]:
+    """Every registered ModelSpec, compared and judge alike."""
+    return [*_COMPARED_MODELS, *_JUDGE_MODELS]
+
+
+async def seed_models(session) -> None:
+    """Upsert every registered ModelSpec into the models table, matched on model_name."""
+    from sqlalchemy import select
+
+    from app.models.entities import Model
+
+    for spec in get_all_specs():
+        existing = await session.scalar(select(Model).where(Model.model_name == spec.model_name))
+        if existing is None:
+            session.add(
+                Model(
+                    provider=spec.provider,
+                    model_name=spec.model_name,
+                    display_name=spec.display_name,
+                    input_price_per_mtok=spec.input_price_per_mtok,
+                    output_price_per_mtok=spec.output_price_per_mtok,
+                    context_window=spec.context_window,
+                    is_active=spec.is_active,
+                )
+            )
+        else:
+            existing.provider = spec.provider
+            existing.display_name = spec.display_name
+            existing.input_price_per_mtok = spec.input_price_per_mtok
+            existing.output_price_per_mtok = spec.output_price_per_mtok
+            existing.context_window = spec.context_window
+            existing.is_active = spec.is_active
+        print(f"seeded: {spec.display_name}")
+
+    await session.commit()

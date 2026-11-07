@@ -98,6 +98,22 @@ async def update_rubric(session: AsyncSession, rubric: Rubric, updates: dict) ->
 
     validate_rubric_values(final_criteria, final_scale_min, final_scale_max)
 
+    if rubric.is_frozen:
+        revised = Rubric(
+            owner_id=rubric.owner_id,
+            name=final_name,
+            criteria=final_criteria,
+            scale_min=final_scale_min,
+            scale_max=final_scale_max,
+            judge_instructions=final_judge_instructions,
+            version=rubric.version + 1,
+            is_frozen=False,
+        )
+        session.add(revised)
+        await session.commit()
+        await session.refresh(revised)
+        return revised
+
     rubric.name = final_name
     rubric.criteria = final_criteria
     rubric.scale_min = final_scale_min
@@ -107,6 +123,15 @@ async def update_rubric(session: AsyncSession, rubric: Rubric, updates: dict) ->
     await session.commit()
     await session.refresh(rubric)
     return rubric
+
+
+async def freeze_rubric(session: AsyncSession, rubric_id: uuid.UUID) -> None:
+    rubric = await session.get(Rubric, rubric_id)
+    if rubric is None:
+        raise ValueError(f"Rubric {rubric_id} not found.")
+    if not rubric.is_frozen:
+        rubric.is_frozen = True
+        await session.commit()
 
 
 async def delete_rubric(session: AsyncSession, rubric: Rubric) -> None:

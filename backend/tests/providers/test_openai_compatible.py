@@ -274,6 +274,17 @@ async def test_temperature_is_omitted_when_not_accepted() -> None:
     assert "temperature" not in json.loads(captured[0].content)
 
 
+async def test_response_format_is_sent_only_when_the_spec_sets_it() -> None:
+    captured: list[httpx.Request] = []
+    spec = make_spec("azure_ai_foundry", "Llama-3.3-70B-Instruct", response_format="json_object")
+
+    await _client(_capturing_handler(captured)).complete(spec, "hi", None, 0.0, 50)
+    await _client(_capturing_handler(captured)).complete(make_spec("azure_ai_foundry", "gpt-4.1"), "hi", None, 0.0, 50)
+
+    assert json.loads(captured[0].content)["response_format"] == {"type": "json_object"}
+    assert "response_format" not in json.loads(captured[1].content)
+
+
 async def test_reasoning_effort_sent_only_when_reasoning_level_is_set() -> None:
     captured: list[httpx.Request] = []
 

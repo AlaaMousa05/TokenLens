@@ -12,6 +12,7 @@ def make_spec(
     request_timeout_seconds: float | None = None,
     uses_max_completion_tokens: bool = False,
     accepts_custom_temperature: bool = True,
+    response_format: str | None = None,
 ) -> ModelSpec:
     return ModelSpec(
         provider=provider,
@@ -26,6 +27,7 @@ def make_spec(
         request_timeout_seconds=request_timeout_seconds,
         uses_max_completion_tokens=uses_max_completion_tokens,
         accepts_custom_temperature=accepts_custom_temperature,
+        response_format=response_format,
     )
 
 
