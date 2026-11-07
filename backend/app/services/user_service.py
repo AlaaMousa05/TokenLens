@@ -20,3 +20,12 @@ async def get_all_users(session: AsyncSession) -> list[User]:
 async def get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> User | None:
     result = await session.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
+
+
+async def update_user(session: AsyncSession, user: User, data: dict[str, object]) -> User:
+    for key, value in data.items():
+        setattr(user, key, value)
+
+    await session.commit()
+    await session.refresh(user)
+    return user
