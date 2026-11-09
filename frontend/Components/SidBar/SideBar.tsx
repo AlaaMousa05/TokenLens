@@ -1,16 +1,84 @@
 "use client";
-import { CirclePlus, CpuAi, Database, LayoutDashboard, RotateCcwClock, Settings } from "lucide-react";
-import Image from "next/image";
- 
-import { useState } from "react";
-import Link from "next/link";
+import {
+  CirclePlus,
+  CpuAi,
+  Database,
+  LayoutDashboard,
+  RotateCcwClock,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 
+import { useRouter } from "next/navigation";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
 export default function SideBar() {
   // User dropdown state
   const [isOpen, setIsOpen] = useState(false);
-
+  const [user, setUser] = useState<User | null>(null);
   // Sidebar open/close state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const router = useRouter();
+  const handleLogout = () => {
+    localStorage.removeItem("access_token");
+    sessionStorage.removeItem("access_token");
+
+    setUser(null);
+    setIsOpen(false);
+
+    router.replace("/");
+  };
+  useEffect(() => {
+    const fetchUser = async () => {
+      const token =
+        localStorage.getItem("access_token") ||
+        sessionStorage.getItem("access_token");
+
+      if (!token) return;
+
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/auth/me`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch user data");
+        }
+
+        const data: User = await response.json();
+        setUser(data);
+      } catch (error) {
+        console.error("Error fetching user:", error);
+      }
+    };
+
+    fetchUser();
+  }, []);
+
+  const initials = user?.name
+    ? user.name
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0])
+        .join("")
+        .toUpperCase()
+    : "U";
 
   return (
     <>
@@ -56,10 +124,10 @@ export default function SideBar() {
                   aria-label="User menu"
                 >
                   <span className="flex h-4 w-7 items-center justify-center rounded-full bg-[#252fbb] font-semibold">
-                    TS
+                    {initials}
                   </span>
                   <span className="text-sm font-medium h-5 w-25">
-                    Tharaa Sukaina
+                    {user?.name || "Loading..."}
                   </span>
                   <span className="text-xs">▼</span>
                 </button>
@@ -71,9 +139,11 @@ export default function SideBar() {
                   id="dropdown-user"
                 >
                   <div className="border-b border-gray-700 px-3 py-2">
-                    <p className="text-sm font-semibold">User</p>
+                    <p className="text-sm font-semibold">
+                      {user?.name || "Loading..."}
+                    </p>
                     <p className="truncate text-xs text-gray-400">
-                      user@example.com
+                      {user?.email || ""}
                     </p>
                   </div>
 
@@ -93,6 +163,7 @@ export default function SideBar() {
 
                   <button
                     type="button"
+                    onClick={handleLogout}
                     className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-gray-800"
                   >
                     Sign out
@@ -112,16 +183,12 @@ export default function SideBar() {
         aria-label="Sidebar"
       >
         <div className="h-full px-3 py-4 overflow-y-auto bg-[#0b132b]">
-          <a href="https://flowbite.com/" className="flex items-center ps-2.5 mb-5">
-            <Image
-              src="https://flowbite.com/docs/images/logo.svg"
-              className="h-6 me-3"
-              width={24}
-              height={24}
-              unoptimized
-              alt="Flowbite Logo"
-            />
-            <span className="self-center text-lg text-heading font-semibold whitespace-nowrap">
+          <a href="/dashboard" className="flex items-center ps-2.5 mb-5">
+            <div className="w-10 h-10 rounded-xl bg-linear-to-br from-[#6255ed] to-[#3324a7] flex items-center justify-center me-3 shadow-lg shadow-purple-900/40">
+              <Sparkles size={24} className="text-white" />
+            </div>
+
+            <span className="self-center text-lg text-white font-semibold whitespace-nowrap">
               LLM SandBox &<br /> Cost Profiler
             </span>
           </a>
@@ -131,7 +198,7 @@ export default function SideBar() {
               <Link
                 href="/dashboard"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <LayoutDashboard className="w-5 h-5 transition duration-75 group-hover:text-fg-brand " />
                 <span className="ms-3">Dashboard</span>
@@ -142,7 +209,7 @@ export default function SideBar() {
               <Link
                 href="/newrun"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <CirclePlus className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">New Run</span>
@@ -153,7 +220,7 @@ export default function SideBar() {
               <Link
                 href="/datasets"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <Database className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Data Sets</span>
@@ -164,7 +231,7 @@ export default function SideBar() {
               <Link
                 href="/models"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <CpuAi className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Models</span>
@@ -175,10 +242,12 @@ export default function SideBar() {
               <Link
                 href="/runhistory"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <RotateCcwClock className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
-                <span className="flex-1 ms-3 whitespace-nowrap">Run History</span>
+                <span className="flex-1 ms-3 whitespace-nowrap">
+                  Run History
+                </span>
               </Link>
             </li>
 
@@ -186,7 +255,7 @@ export default function SideBar() {
               <Link
                 href="/settings"
                 onClick={() => setIsSidebarOpen(false)}
-                className="flex items-center px-2 py-1.5 text-body rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
+                className="flex items-center px-2 py-1.5 text-white rounded-base hover:bg-neutral-tertiary hover:text-fg-brand group"
               >
                 <Settings className="w-5 h-5 transition duration-75 group-hover:text-fg-brand" />
                 <span className="flex-1 ms-3 whitespace-nowrap">Settings</span>
