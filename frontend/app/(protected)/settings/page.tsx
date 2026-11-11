@@ -1,17 +1,23 @@
 "use client";
 
 import SideBar from "@/Components/SidBar/SideBar";
-import { ClipboardList, Database, Info, Lock, Save, Sliders, User, } from "lucide-react";
-import React, { useState } from "react";
+import { ClipboardList, Database, Lock, Save, Sliders, User } from "lucide-react";
+import React, { useEffect, useState } from "react";
 
-const panelClass ="rounded-xl border border-[#1b2750] bg-[#0b132b] p-6 text-slate-200 shadow-lg";
-const fieldClass ="w-full rounded-lg border border-[#223062] bg-[#091129] px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0] transition-colors";
+const panelClass = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-6 text-slate-200 shadow-lg";
+const fieldClass = "w-full rounded-lg border border-[#223062] bg-[#091129] px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0] transition-colors";
 const labelClass = "mb-1.5 block text-xs font-medium text-slate-300";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 export default function SettingsPage() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   // 1. Profile States
-  const [name, setName] = useState("Nadeen Abu Hilweh");
-  const [email, setEmail] = useState("nadeen@example.com");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   // 2. Run Defaults States
@@ -27,12 +33,51 @@ export default function SettingsPage() {
 
   // 4. Usage & Cost Controls States
   const [monthlySpendingCap, setMonthlySpendingCap] = useState<string>("50.00");
-  const currentMonthSpend = 12.40;
+  const [currentMonthSpend, setCurrentMonthSpend] = useState<number>(0.0);
 
   // 5. Security States
   const [password, setPassword] = useState("••••••••");
 
-  // دالة تغيير الصورة الشخصية
+  // جلب الإعدادات الحقيقية من الباك إند عند تحميل الصفحة
+  useEffect(() => {
+    async function fetchSettings() {
+      setLoading(true);
+      setError(null);
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${API_URL}/settings`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+
+        if (!res.ok) {
+          throw new Error(res.status === 401 ? "Unauthorized. Please log in." : "Failed to load settings.");
+        }
+
+        const data = await res.json();
+        // تعبئة البيانات القادمة حصرياً من الباك إند
+        if (data.name) setName(data.name);
+        if (data.email) setEmail(data.email);
+        if (data.temperature !== undefined) setTemperature(data.temperature);
+        if (data.maxOutputTokens) setMaxOutputTokens(String(data.maxOutputTokens));
+        if (data.repeats) setRepeats(String(data.repeats));
+        if (data.defaultJudgeModel) setDefaultJudgeModel(data.defaultJudgeModel);
+        if (data.defaultRubric) setDefaultRubric(data.defaultRubric);
+        if (data.hideModelIdentities !== undefined) setHideModelIdentities(data.hideModelIdentities);
+        if (data.swapAnswerOrder !== undefined) setSwapAnswerOrder(data.swapAnswerOrder);
+        if (data.monthlySpendingCap) setMonthlySpendingCap(String(data.monthlySpendingCap));
+        if (data.currentMonthSpend !== undefined) setCurrentMonthSpend(data.currentMonthSpend);
+      } catch (err) {
+        console.error("Failed to fetch settings from backend:", err);
+        setError(err instanceof Error ? err.message : "Failed to load settings.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchSettings();
+  }, []);
+
+  // دالة تغيير الصورة الشخصية محلياً
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -40,17 +85,67 @@ export default function SettingsPage() {
       setAvatarUrl(imageUrl);
     }
   };
-  const handleSaveProfile = () => {
-    alert("Profile updated successfully!");
+
+  // حفظ الإعدادات أو الملف الشخصي للباك إند مباشرة
+  const handleSaveSettings = async (updatedData: object, successMessage: string) => {
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_URL}/settings`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(updatedData),
+      });
+
+      if (!res.ok) throw new Error("Failed to save settings.");
+
+      alert(successMessage);
+    } catch (err) {
+      console.error(err);
+      alert("Error saving settings to backend.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleChangePassword = () => {
-    alert("Password changed successfully!");
+  const handleSaveProfile = () => {
+    handleSaveSettings({ name, email }, "Profile updated successfully!");
+  };
+
+  const handleChangePassword = async () => {
+    if (password === "••••••••" || !password) {
+      alert("Please enter a new valid password.");
+      return;
+    }
+    await handleSaveSettings({ password }, "Password changed successfully!");
   };
 
   const handleSaveAllSettings = () => {
-    alert("All settings saved successfully!");
+    handleSaveSettings(
+      {
+        temperature,
+        maxOutputTokens: Number(maxOutputTokens),
+        repeats: Number(repeats),
+        defaultJudgeModel,
+        defaultRubric,
+        hideModelIdentities,
+        swapAnswerOrder,
+        monthlySpendingCap: Number(monthlySpendingCap),
+      },
+      "All settings saved successfully!"
+    );
   };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#060b1f] text-white">
+        <p className="animate-pulse text-sm text-slate-400">Loading settings...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#060b1f] text-slate-200 font-sans">
@@ -65,6 +160,12 @@ export default function SettingsPage() {
             </p>
           </div>
         </header>
+
+        {error && (
+          <div className="mb-6 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-400">
+            {error}
+          </div>
+        )}
 
         {/* Settings Grid */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 mb-8">
@@ -87,7 +188,7 @@ export default function SettingsPage() {
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
                 ) : (
-                  "N"
+                  name.charAt(0) || "U"
                 )}
               </div>
               <label className="cursor-pointer rounded-lg border border-[#2a3a78] bg-[#091129] px-4 py-2 text-xs font-medium text-slate-200 hover:bg-white/5 transition-colors">
@@ -125,9 +226,10 @@ export default function SettingsPage() {
               <div className="pt-2">
                 <button 
                   onClick={handleSaveProfile}
-                  className="w-full rounded-lg bg-[#3347e0] py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-md"
+                  disabled={saving}
+                  className="w-full rounded-lg bg-[#3347e0] py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-md disabled:opacity-50"
                 >
-                  Save Changes
+                  {saving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
             </div>
@@ -162,10 +264,6 @@ export default function SettingsPage() {
                   onChange={(e) => setTemperature(parseFloat(e.target.value))}
                   className="w-full accent-[#3347e0] cursor-pointer bg-[#091129]"
                 />
-                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                  <span>0.0</span>
-                  <span>1.0</span>
-                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -248,7 +346,6 @@ export default function SettingsPage() {
                   className="h-4 w-4 rounded border-[#223062] bg-[#091129] text-[#3347e0] focus:ring-[#4a5df0]"
                 />
                 <span className="text-sm text-slate-200">Hide model identities from judge</span>
-                <Info size={14} className="text-slate-500 hover:text-slate-300" />
               </label>
 
               <label className="flex items-center gap-3 cursor-pointer">
@@ -259,7 +356,6 @@ export default function SettingsPage() {
                   className="h-4 w-4 rounded border-[#223062] bg-[#091129] text-[#3347e0] focus:ring-[#4a5df0]"
                 />
                 <span className="text-sm text-slate-200">Swap answer order for judging</span>
-                <Info size={14} className="text-slate-500 hover:text-slate-300" />
               </label>
             </div>
           </section>
@@ -290,11 +386,6 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
-                <Info size={14} className="text-slate-500 shrink-0" />
-                <span>Provider API keys are managed securely on the server.</span>
-              </div>
-
               <div className="pt-2">
                 <div className="flex justify-between text-xs mb-1.5">
                   <span className="text-slate-400">Current month spend</span>
@@ -306,7 +397,7 @@ export default function SettingsPage() {
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-[#3347e0] to-[#4a5df0]"
                     style={{
-                      width: `${(currentMonthSpend / parseFloat(monthlySpendingCap || "1")) * 100}%`,
+                      width: `${Math.min(100, (currentMonthSpend / parseFloat(monthlySpendingCap || "1")) * 100)}%`,
                     }}
                   ></div>
                 </div>
@@ -351,7 +442,6 @@ export default function SettingsPage() {
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                   <span className="text-sm font-semibold text-emerald-400">JWT session active</span>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Your session is secure and active.</p>
               </div>
             </div>
           </section>
@@ -361,10 +451,11 @@ export default function SettingsPage() {
         <div className="flex justify-end">
           <button
             onClick={handleSaveAllSettings}
-            className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-6 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-lg shadow-blue-950/50"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-6 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors shadow-lg shadow-blue-950/50 disabled:opacity-50"
           >
             <Save size={16} />
-            Save Settings
+            {saving ? "Saving..." : "Save Settings"}
           </button>
         </div>
       </main>
