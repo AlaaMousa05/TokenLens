@@ -1,14 +1,15 @@
 "use client";
 import SideBar from "@/Components/SidBar/SideBar";
 import StatCard from "@/Components/StatCard/StatCard";
-import { ArrowUpDown, Cpu, DollarSign, Edit2, Maximize2, MoreVertical, Plus, Search, Server, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertCircle, Cpu, Loader2, Plus, Search, Server, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
 const panel = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-5";
 const field = "w-full rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0]";
 
 type ModelItem = {
   id: string;
-  provider: "OpenAI" | "Anthropic" | "Meta" | "Google" | "Mistral";
+  provider: string;
   displayName: string;
   badge?: string;
   contextWindow: string;
@@ -17,37 +18,119 @@ type ModelItem = {
   isActive: boolean;
 };
 
-// بيانات تجريبية
-const initialModels: ModelItem[] = [
-  { id: "1", provider: "OpenAI", displayName: "GPT-4o", badge: "Latest", contextWindow: "128K", inputPricePerMtok: 2.50, outputPricePerMtok: 10.00, isActive: true },
-  { id: "2", provider: "OpenAI", displayName: "GPT-4o mini", contextWindow: "128K", inputPricePerMtok: 0.15, outputPricePerMtok: 0.60, isActive: true },
-  { id: "3", provider: "OpenAI", displayName: "o1-mini", contextWindow: "128K", inputPricePerMtok: 1.10, outputPricePerMtok: 4.40, isActive: true },
-  { id: "4", provider: "OpenAI", displayName: "o1-preview", contextWindow: "128K", inputPricePerMtok: 15.00, outputPricePerMtok: 60.00, isActive: false },
-  { id: "5", provider: "Anthropic", displayName: "Claude 3.5 Sonnet", badge: "Latest", contextWindow: "200K", inputPricePerMtok: 3.00, outputPricePerMtok: 15.00, isActive: true },
-  { id: "6", provider: "Anthropic", displayName: "Claude 3.5 Haiku", contextWindow: "200K", inputPricePerMtok: 0.80, outputPricePerMtok: 4.00, isActive: true },
-  { id: "7", provider: "Anthropic", displayName: "Claude 3 Opus", contextWindow: "200K", inputPricePerMtok: 15.00, outputPricePerMtok: 75.00, isActive: false },
-  { id: "8", provider: "Meta", displayName: "Llama 3.1 70B", contextWindow: "128K", inputPricePerMtok: 0.90, outputPricePerMtok: 0.90, isActive: true },
-  { id: "9", provider: "Meta", displayName: "Llama 3.1 8B", contextWindow: "128K", inputPricePerMtok: 0.20, outputPricePerMtok: 0.20, isActive: true },
-  { id: "10", provider: "Meta", displayName: "Llama 3 70B", contextWindow: "128K", inputPricePerMtok: 0.80, outputPricePerMtok: 0.80, isActive: true },
-  { id: "11", provider: "Google", displayName: "Gemini 1.5 Pro", contextWindow: "2M", inputPricePerMtok: 12.50, outputPricePerMtok: 50.00, isActive: true },
-  { id: "12", provider: "Google", displayName: "Gemini 1.5 Flash", contextWindow: "1M", inputPricePerMtok: 0.35, outputPricePerMtok: 1.50, isActive: true },
-];
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+const authHeaders = (): HeadersInit => {
+  const token = 
+    localStorage.getItem("access_token") || 
+    localStorage.getItem("token") || 
+    sessionStorage.getItem("access_token") || 
+    sessionStorage.getItem("token");
+    
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 export default function ModelsPage() {
-  const [models, setModels] = useState<ModelItem[]>(initialModels);
+  const [models, setModels] = useState<ModelItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("All Providers");
   const [selectedStatus, setSelectedStatus] = useState("All Statuses");
-  
-  // حالة نافذة إضافة/تعديل نموذج (Modal state) لصلاحيات الـ Admin
-  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // تبديل حالة النموذج (Active / Inactive)
+  // State for admin privileges and modal visibility
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newModel, setNewModel] = useState({
+    provider: "",
+    displayName: "",
+    inputPrice: "",
+    outputPrice: "",
+    contextWindow: "128000",
+  });
+
+  // التحقق من صلاحية الـ Admin عند تحميل الصفحة
+  useEffect(() => {
+    const userRole = localStorage.getItem("role");
+    if (userRole === "admin") {
+      setIsAdmin(true);
+    }
+  }, []);
+
+  // جلب النماذج من الباك إند عند تحميل الصفحة
+  const fetchModels = async () => {
+    setLoading(true);
+    setApiError("");
+    try {
+      const res = await fetch(`${API}/models`, { headers: authHeaders() });
+      if (res.status === 401) throw new Error("Please log in again.");
+      if (!res.ok) throw new Error("Failed to load models from backend.");
+      
+      const data = await res.json();
+      const formatted: ModelItem[] = data.map((m: any) => ({
+        id: m.id,
+        provider: m.provider ?? "Unknown",
+        displayName: m.display_name ?? m.displayName ?? m.id,
+        contextWindow: m.context_window ? `${m.context_window / 1000}K` : "128K",
+        inputPricePerMtok: Number(m.input_price_per_mtok ?? m.inputPricePerMtok ?? 0),
+        outputPricePerMtok: Number(m.output_price_per_mtok ?? m.outputPricePerMtok ?? 0),
+        isActive: m.is_active ?? m.isActive ?? true,
+      }));
+      setModels(formatted);
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Could not load models.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchModels();
+  }, []);
+
+  // إضافة نموذج جديد وإرساله إلى الباك إند (للأدمن فقط)
+  const handleAddModel = async () => {
+    if (!isAdmin) {
+      alert("Unauthorized: Only admins can add models.");
+      return;
+    }
+    if (!newModel.provider || !newModel.displayName) {
+      alert("Please fill in the provider and display name.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API}/models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          id: newModel.displayName.toLowerCase().replace(/\s+/g, "-"),
+          provider: newModel.provider,
+          display_name: newModel.displayName,
+          input_price_per_mtok: parseFloat(newModel.inputPrice) || 0,
+          output_price_per_mtok: parseFloat(newModel.outputPrice) || 0,
+          context_window: parseInt(newModel.contextWindow) || 128000,
+          is_active: true,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to add new model.");
+
+      setIsModalOpen(false);
+      setNewModel({ provider: "", displayName: "", inputPrice: "", outputPrice: "", contextWindow: "128000" });
+      fetchModels(); // تحديث الجدول تلقائياً
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Could not add model.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const toggleModelStatus = (id: string) => {
     setModels(prev => prev.map(m => m.id === id ? { ...m, isActive: !m.isActive } : m));
   };
 
-  // تصفية النماذج حسب البحث ومزود الخدمة والحالة
   const filteredModels = useMemo(() => {
     return models.filter(m => {
       const matchesSearch = m.displayName.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -60,16 +143,7 @@ export default function ModelsPage() {
     });
   }, [models, searchQuery, selectedProvider, selectedStatus]);
 
-  // إعداد بيانات البطاقات الإحصائية باستخدام مكون StatCard
   const modelStats = [
-    {
-      id: "total-providers",
-      title: "Total Providers",
-      value: "5",
-      change: "OpenAI, Anthropic...",
-      changeType: "positive" as const,
-      icon: Server,
-    },
     {
       id: "total-models",
       title: "Total Models",
@@ -79,20 +153,12 @@ export default function ModelsPage() {
       icon: Cpu,
     },
     {
-      id: "max-context",
-      title: "Max Context Window",
-      value: "2M",
-      change: "Gemini 1.5 Pro",
+      id: "active-models",
+      title: "Active Models",
+      value: models.filter(m => m.isActive).length,
+      change: "Ready for runs",
       changeType: "positive" as const,
-      icon: Maximize2,
-    },
-    {
-      id: "est-cost",
-      title: "Estimated Monthly Cost",
-      value: "$248.72",
-      change: "1M in + 1M out",
-      changeType: "positive" as const,
-      icon: DollarSign,
+      icon: Server,
     },
   ];
 
@@ -104,19 +170,37 @@ export default function ModelsPage() {
           <div>
             <h1 className="text-2xl font-semibold text-white">Models</h1>
             <p className="mt-1 text-sm text-slate-400">
-              Manage model providers, available models, and token pricing.
+              Manage model providers, available models, and token pricing from backend.
             </p>
           </div>
           
-          {/* زر إضافة نموذج جديد */}
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors"
-          >
-            <Plus size={16} />
-            Add Model
-          </button>
+          {/* إظهار زر Add Model حصرياً للـ Admin */}
+          {isAdmin && (
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] transition-colors"
+            >
+              <Plus size={16} />
+              Add Model
+            </button>
+          )}
         </header>
+
+        {loading && (
+          <div className={`${panel} mb-5 flex items-center gap-3`}>
+            <Loader2 className="animate-spin text-blue-400" />
+            <span className="text-sm">Loading models from backend...</span>
+          </div>
+        )}
+
+        {apiError && (
+          <div className="mb-5 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
+            <p className="flex items-center gap-2 text-sm text-red-300">
+              <AlertCircle size={17} />
+              {apiError}
+            </p>
+          </div>
+        )}
 
         {/* شريط البحث والفلاتر */}
         <div className={`${panel} mb-6 flex flex-wrap items-center justify-between gap-4 py-4`}>
@@ -132,20 +216,18 @@ export default function ModelsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* فلتر المزودين */}
             <select
               value={selectedProvider}
               onChange={(e) => setSelectedProvider(e.target.value)}
               className="rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-300 focus:border-[#4a5df0] focus:outline-none"
             >
               <option value="All Providers">All Providers</option>
-              <option value="OpenAI">OpenAI</option>
+              <option value="Azure">Azure / OpenAI</option>
               <option value="Anthropic">Anthropic</option>
               <option value="Meta">Meta</option>
               <option value="Google">Google</option>
             </select>
 
-            {/* فلتر الحالة */}
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
@@ -155,16 +237,10 @@ export default function ModelsPage() {
               <option value="Active">Active</option>
               <option value="Inactive">Inactive</option>
             </select>
-
-            {/* زر الترتيب */}
-            <button className="flex items-center gap-2 rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-300 hover:bg-white/5">
-              <ArrowUpDown size={15} />
-              Sort by: Name (A-Z)
-            </button>
           </div>
         </div>
 
-        {/* جدول عرض النماذج (Models Table) */}
+        {/* جدول النماذج */}
         <section className={`${panel} mb-6 overflow-x-auto p-0`}>
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
@@ -182,7 +258,7 @@ export default function ModelsPage() {
               {filteredModels.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-500">
-                    No models found matching your filters.
+                    {loading ? "Loading..." : "No models found."}
                   </td>
                 </tr>
               ) : (
@@ -193,14 +269,7 @@ export default function ModelsPage() {
                       {model.provider}
                     </td>
                     <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium">{model.displayName}</span>
-                        {model.badge && (
-                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
-                            {model.badge}
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-white font-medium">{model.displayName}</span>
                     </td>
                     <td className="py-3.5 px-4 text-slate-300">{model.contextWindow}</td>
                     <td className="py-3.5 px-4 text-slate-300">${model.inputPricePerMtok.toFixed(2)}</td>
@@ -211,16 +280,11 @@ export default function ModelsPage() {
                           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" 
                           : "border-red-500/30 bg-red-500/10 text-red-300"
                       }`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${model.isActive ? "bg-emerald-400" : "bg-red-400"}`}></span>
                         {model.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-3">
-                        <button className="text-slate-400 hover:text-white transition-colors" title="Edit Model">
-                          <Edit2 size={16} />
-                        </button>
-                        {/* مفتاح التفعيل والإيقاف */}
                         <label className="relative inline-flex items-center cursor-pointer">
                           <input 
                             type="checkbox" 
@@ -228,11 +292,8 @@ export default function ModelsPage() {
                             onChange={() => toggleModelStatus(model.id)}
                             className="sr-only peer" 
                           />
-                          <div className="w-9 h-5 bg-[#1b2750] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#3347e0]"></div>
+                          <div className="w-9 h-5 bg-[#1b2750] rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#3347e0]"></div>
                         </label>
-                        <button className="text-slate-400 hover:text-white transition-colors">
-                          <MoreVertical size={16} />
-                        </button>
                       </div>
                     </td>
                   </tr>
@@ -240,23 +301,16 @@ export default function ModelsPage() {
               )}
             </tbody>
           </table>
-          <div className="flex items-center justify-between border-t border-[#1b2750] px-4 py-3 text-xs text-slate-400">
-            <span>Showing 1–{filteredModels.length} of {models.length} models</span>
-            <div className="flex items-center gap-1">
-              <button disabled className="rounded border border-[#223062] bg-[#091129] px-2.5 py-1 opacity-50 cursor-not-allowed">&lt;</button>
-              <button className="rounded border border-[#4a5df0] bg-[#3347e0] px-3 py-1 text-white font-medium">1</button>
-              <button disabled className="rounded border border-[#223062] bg-[#091129] px-2.5 py-1 opacity-50 cursor-not-allowed">&gt;</button>
-            </div>
-          </div>
         </section>
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 w-full">
+
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 w-full">
           {modelStats.map((stat) => (
             <StatCard key={stat.id} {...stat} />
           ))}
         </div>
 
-        {/* Modal إضافة جديد */}
-        {isModalOpen && (
+        {/* Modal إضافة نموذج جديد (يظهر للأدمن فقط) */}
+        {isAdmin && isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
             <div className={`${panel} w-full max-w-lg bg-[#0b132b] border-[#2a3a78]`}>
               <div className="flex items-center justify-between border-b border-[#1b2750] pb-3 mb-4">
@@ -268,25 +322,47 @@ export default function ModelsPage() {
               <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-300">Provider Name</label>
-                  <input type="text" placeholder="e.g. OpenAI, Anthropic" className={field} />
+                  <input
+                    type="text"
+                    placeholder="e.g. Azure, OpenAI, Anthropic"
+                    value={newModel.provider}
+                    onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })}
+                    className={field}
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-300">Model Display Name</label>
-                  <input type="text" placeholder="e.g. GPT-4o" className={field} />
+                  <input
+                    type="text"
+                    placeholder="e.g. GPT-4.5 Turbo"
+                    value={newModel.displayName}
+                    onChange={(e) => setNewModel({ ...newModel, displayName: e.target.value })}
+                    className={field}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-300">Input Price / 1M Tokens ($)</label>
-                    <input type="number" step="0.01" placeholder="2.50" className={field} />
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="2.50"
+                      value={newModel.inputPrice}
+                      onChange={(e) => setNewModel({ ...newModel, inputPrice: e.target.value })}
+                      className={field}
+                    />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-300">Output Price / 1M Tokens ($)</label>
-                    <input type="number" step="0.01" placeholder="10.00" className={field} />
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="10.00"
+                      value={newModel.outputPrice}
+                      onChange={(e) => setNewModel({ ...newModel, outputPrice: e.target.value })}
+                      className={field}
+                    />
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-300">Context Window</label>
-                  <input type="text" placeholder="e.g. 128K, 200K" className={field} />
                 </div>
               </div>
               <div className="mt-6 flex justify-end gap-3 border-t border-[#1b2750] pt-4">
@@ -297,16 +373,17 @@ export default function ModelsPage() {
                   Cancel
                 </button>
                 <button 
-                  onClick={() => setIsModalOpen(false)}
-                  className="rounded-lg bg-[#3347e0] px-5 py-2 text-sm font-medium text-white hover:bg-[#4256f0]"
+                  onClick={handleAddModel}
+                  disabled={submitting}
+                  className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-5 py-2 text-sm font-medium text-white hover:bg-[#4256f0] disabled:opacity-50"
                 >
+                  {submitting && <Loader2 size={14} className="animate-spin" />}
                   Save Model
                 </button>
               </div>
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
