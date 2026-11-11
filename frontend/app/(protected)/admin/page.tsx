@@ -27,6 +27,7 @@ interface AdminDashboardData {
   openRegressionAlerts: number;
   recentRuns: Array<{
     id: string;
+    runId?: string;
     name: string;
     dataset: string;
     modelsCount: number;
@@ -57,12 +58,12 @@ interface AdminDashboardData {
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 // Helper function to get auth headers from localStorage/sessionStorage
 const authHeaders = (): HeadersInit => {
-  const token = 
-    localStorage.getItem("token") || 
-    localStorage.getItem("access_token") || 
-    sessionStorage.getItem("token") || 
+  const token =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token") ||
     sessionStorage.getItem("access_token");
-    
+
   return token ? { Authorization: `Bearer ` + token } : {};
 };
 // Admin Dashboard Component
@@ -90,7 +91,7 @@ function AdminDashboardContent() {
           fetch(`${API}/runs`, { headers: authHeaders() }).catch(() => null),
         ]);
         // Handle unauthorized access
-        if (modelsRes.status === 401 || datasetsRes.status === 401) { 
+        if (modelsRes.status === 401 || datasetsRes.status === 401) {
           throw new Error("Please log in again.");
         }
 
@@ -98,7 +99,9 @@ function AdminDashboardContent() {
         const datasetsData = await datasetsRes.json().catch(() => ({ items: [], total: 0 }));
         const runsData = runsRes && runsRes.ok ? await runsRes.json().catch(() => []) : [];
 
-        const formattedRuns = Array.isArray(runsData) ? runsData.slice(0, 5).map((r: any, idx: number) => ({
+        const runsList = Array.isArray(runsData) ? runsData : Array.isArray(runsData?.items) ? runsData.items : null;
+        const formattedRuns = runsList ? runsList.slice(0, 5).map((r: any, idx: number) => ({
+          runId: r.id as string | undefined,
           // Use the first 4 characters of the run ID or a fallback ID
           id: `#${r.id?.slice(0, 4) || 8420 + idx}`,
           name: r.name || `Run ${idx + 1}`,
@@ -173,8 +176,8 @@ function AdminDashboardContent() {
           <AlertCircle className="mx-auto text-red-400 mb-2" size={32} />
           <h2 className="text-lg font-semibold text-white">Failed to load Dashboard</h2>
           <p className="mt-2 text-sm text-slate-400">{apiError || "No data available."}</p>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => window.location.reload()}
             className="mt-4 rounded-lg bg-[#3347e0] px-4 py-2 text-sm font-medium text-white hover:bg-[#4256f0]"
           >
             Retry
@@ -195,10 +198,10 @@ function AdminDashboardContent() {
       <SideBar />
 
       <main className="min-w-0 px-4 pb-8 pt-6 sm:ml-64 sm:px-8">
-        
+
         {/* Top Header Bar */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-    
+
         </div>
 
         {/* Welcome Section */}
@@ -211,8 +214,8 @@ function AdminDashboardContent() {
           </div>
 
           <div className="flex items-center gap-2">
-            <select 
-              value={timeRange} 
+            <select
+              value={timeRange}
               onChange={(e) => setTimeRange(e.target.value)}
               className="rounded-lg border border-[#1b2750] bg-[#0b132b] px-3 py-2 text-xs text-white focus:outline-none cursor-pointer"
             >
@@ -344,12 +347,16 @@ function AdminDashboardContent() {
                         </span>
                       </td>
                       <td className="py-3">
-                        <Link 
-                          href={`/runs/${idx + 1}`}
-                          className="inline-flex items-center gap-1 rounded border border-[#233266] bg-[#0c1636] px-2 py-1 text-[11px] text-blue-300 hover:bg-[#3347e0] hover:text-white transition-all"
-                        >
-                          Open <ExternalLink size={10} />
-                        </Link>
+                        {run.runId ? (
+                          <Link
+                            href={`/runresult/${run.runId}`}
+                            className="inline-flex items-center gap-1 rounded border border-[#233266] bg-[#0c1636] px-2 py-1 text-[11px] text-blue-300 hover:bg-[#3347e0] hover:text-white transition-all"
+                          >
+                            Open <ExternalLink size={10} />
+                          </Link>
+                        ) : (
+                          <span className="text-[11px] text-slate-500">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
