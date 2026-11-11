@@ -244,6 +244,58 @@ async function getJson<T>(path: string): Promise<T> {
   if (!response.ok) throw new Error(`Failed to load ${path}`);
   return response.json();
 }
+
+// ---- Settings helpers (inlined, no external file needed) ----
+type CurrentUser = { id: string; name: string; email: string; role: string; created_at: string };
+type SavedSettings = {
+  temperature: number;
+  repeats: number;
+  swapOrder: boolean;
+  defaultJudgeModelId: string;
+  defaultRubricId: string;
+  monthlySpendingCap: number;
+};
+function loadSettings(userId: string): SavedSettings | null {
+  try {
+    const raw = localStorage.getItem(`tokenlens:settings:${userId}`);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<SavedSettings>;
+    const clamp = (v: number, min: number, max: number) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min);
+    return {
+      temperature: clamp(Number(p.temperature ?? 0.2), 0, 2),
+      repeats: Math.round(clamp(Number(p.repeats ?? 3), 1, 5)),
+      swapOrder: Boolean(p.swapOrder),
+      defaultJudgeModelId: typeof p.defaultJudgeModelId === "string" ? p.defaultJudgeModelId : "",
+      defaultRubricId: typeof p.defaultRubricId === "string" ? p.defaultRubricId : "",
+      monthlySpendingCap: Math.max(0, Number(p.monthlySpendingCap ?? 0) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+async function getMonthlySpend(): Promise<number> {
+  const now = new Date();
+  let total = 0;
+  for (let page = 1; page <= 50; page++) {
+    const data = await getJson<{
+      items: { total_cost_usd: string | number; created_at: string }[];
+      size: number;
+      total: number;
+    }>(`/runs?page=${page}&size=100`);
+    let reachedOlder = false;
+    for (const run of data.items) {
+      const d = new Date(run.created_at);
+      if (d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth()) {
+        total += Number(run.total_cost_usd) || 0;
+      } else {
+        reachedOlder = true;
+      }
+    }
+    if (reachedOlder || page * data.size >= data.total) break;
+  }
+  return total;
+}
+
 // Represents the structure of an API error response, which may contain a detail message or an array of messages.
 type ApiError = { detail?: string | { msg: string }[] | { errors?: string[] } };
 function errorMessage(data: ApiError | null, fallback: string) {
@@ -287,6 +339,8 @@ export default function NewRunPage() {
   const [datasetId, setDatasetId] = useState("");
   const [dragging, setDragging] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  // Monthly spending cap from Settings (USD, 0 = no limit).
+  const [spendingCap, setSpendingCap] = useState(0);
 
   // Modal states for adding a new Rubric
   const [isRubricModalOpen, setIsRubricModalOpen] = useState(false);
@@ -390,7 +444,8 @@ export default function NewRunPage() {
       setLoading(true);
       setApiError("");
       try {
-        const [modelsData, rubricsData, datasetsData] = await Promise.all([
+        const [me, modelsData, rubricsData, datasetsData] = await Promise.all([
+          getJson<CurrentUser>("/auth/me"),
           getJson<ApiModel[]>("/models"),
           getJson<{ items: Rubric[] }>("/rubrics?page=1&size=100"),
           getJson<{ items: ApiDataset[] }>("/datasets?page=1&size=100"),
@@ -401,6 +456,24 @@ export default function NewRunPage() {
         setDatasets(
           (datasetsData.items || []).map((d) => ({ id: d.id, name: d.name, itemCount: d.item_count }))
         );
+
+        // Apply the defaults the user saved in Settings (if any).
+        const saved = loadSettings(me.id);
+        if (saved) {
+          setTemperature(saved.temperature);
+          setRepeats(saved.repeats);
+          setSwapOrder(saved.swapOrder);
+          setSpendingCap(saved.monthlySpendingCap);
+
+          const judge = modelsData.map(normalizeModel).find((m) => m.id === saved.defaultJudgeModelId && m.isActive);
+          if (judge) setJudgeModelId(judge.id);
+
+          const rubric = (rubricsData.items || []).find((r) => r.id === saved.defaultRubricId);
+          if (rubric && isRubricUsable(rubric)) {
+            setRubricId(rubric.id);
+            setJudgeInstructions(rubric.judge_instructions ?? "");
+          }
+        }
       } catch (err) {
         if (!mounted) return;
         setApiError(err instanceof Error ? err.message : "Could not load project data.");
@@ -497,6 +570,17 @@ export default function NewRunPage() {
       if (name.length > 150) {
         throw new Error("Run name cannot exceed 150 characters.");
       }
+      if (spendingCap > 0) {
+        const spent = await getMonthlySpend();
+        const projected = spent + (estimate.comparisonCost ?? 0);
+        if (projected > spendingCap) {
+          throw new Error(
+            `Monthly spending cap of $${spendingCap.toFixed(2)} would be exceeded ` +
+              `(spent $${spent.toFixed(4)} + estimated $${(estimate.comparisonCost ?? 0).toFixed(4)}). ` +
+              `Raise the cap in Settings to continue.`
+          );
+        }
+      }
       let finalDatasetId = datasetId;
 
       if (mode === "prompt") {
@@ -539,11 +623,11 @@ export default function NewRunPage() {
       });
 // Parses the response from the run creation request, checking for errors and ensuring an ID is returned. If successful, it removes the draft from local storage and navigates to the new run page.
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(errorMessage(data, "Could not start the run."));
+      if (!response.ok) throw new Error(errorMessage(data, `Could not start the run (HTTP ${response.status}).`));
       if (!data?.id) throw new Error("Run was created, but the response does not contain an ID.");
 // Removes the saved draft from local storage and navigates to the newly created run's page.
       localStorage.removeItem(DRAFT_KEY);
-      router.push(`/runs/${data.id}`);
+      router.push(`/runresult/${data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setSubmitting(false);
