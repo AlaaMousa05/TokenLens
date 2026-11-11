@@ -53,7 +53,7 @@ export default function AuthGuard({
   if (!authorized) {
     return (
       <div className="min-h-screen bg-[#060b1f] flex items-center justify-center text-white">
-        Checking authentication...
+       Loading your workspace...
       </div>
     );
   }
