@@ -740,7 +740,7 @@ export default function NewRunPage() {
                 </div>
               </div>
             )}
-// Conditionally renders the system prompt input field if the mode is "prompt" or if the mode is "dataset" and a file has been uploaded. This allows users to provide an optional system prompt for their evaluation run.
+{/*Conditionally renders the system prompt input field if the mode is "prompt" or if the mode is "dataset" and a file has been uploaded. This allows users to provide an optional system prompt for their evaluation run.*/}
             {(mode === "prompt" || (mode === "dataset" && !!upload)) && (
             <div className="mt-5">
               <label htmlFor="system-prompt" className={label}>System prompt (optional)</label>
