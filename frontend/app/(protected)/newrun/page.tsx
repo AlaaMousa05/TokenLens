@@ -912,8 +912,13 @@ export default function NewRunPage() {
               <p className="text-sm text-slate-400">
                 {itemCount} items × {selected.length} models × {repeats} repeats
               </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {estimate.calls} model calls + {estimate.judgeCalls} judge calls
+              <p className="mt-1 text-xs text-slate-500 flex items-center gap-2">
+                <span>{estimate.calls} model calls + {estimate.judgeCalls} judge calls</span>
+                {estimate.comparisonCost !== null && (
+                  <span className="font-semibold text-blue-400">
+                    · Est. Cost: ${estimate.comparisonCost.toFixed(4)}
+                  </span>
+                )}
               </p>
             </div>
 
