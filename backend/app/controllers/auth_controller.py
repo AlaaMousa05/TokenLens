@@ -23,6 +23,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def _to_user_public(user: User) -> UserPublic:
+    return UserPublic(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        created_at=user.created_at,
+    )
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_db_session),
@@ -58,7 +68,7 @@ async def register(payload: RegisterRequest, session: AsyncSession = Depends(get
     except DuplicateEmailError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
-    return UserPublic(id=user.id, name=user.name, email=user.email, role=user.role, created_at=user.created_at)
+    return _to_user_public(user)
 
 
 @router.post(
@@ -79,6 +89,7 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_se
         access_token=create_access_token(user.id),
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60,
+        user=_to_user_public(user),
     )
 
 
@@ -93,10 +104,4 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_se
     },
 )
 async def me(current_user: User = Depends(get_current_user)) -> UserPublic:
-    return UserPublic(
-        id=current_user.id,
-        name=current_user.name,
-        email=current_user.email,
-        role=current_user.role,
-        created_at=current_user.created_at,
-    )
+    return _to_user_public(current_user)

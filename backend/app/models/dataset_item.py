@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, ForeignKey, Index, Integer, Text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,7 @@ class DatasetItem(Base):
     position: Mapped[int] = mapped_column(Integer)
     input_prompt: Mapped[str] = mapped_column(Text)
     expected_output: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(64))
     metadata_: Mapped[dict] = mapped_column("metadata", JSON)
 
     dataset: Mapped["Dataset"] = relationship(back_populates="items")

@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
+import arq
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.entities import (
     Dataset,
     DatasetItem,
@@ -18,7 +21,7 @@ from app.models.entities import (
     RunModel,
     RunStatus,
 )
-from app.services.rubric_service import validate_rubric_values
+from app.services.rubric_service import freeze_rubric, validate_rubric_values
 
 
 class RunValidationError(Exception):
@@ -29,6 +32,16 @@ class RunValidationError(Exception):
 class RunWithModels:
     run: Run
     model_ids: list[uuid.UUID]
+
+
+_redis_pool: Any = None
+
+
+async def _get_redis_pool() -> Any:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = await arq.create_pool(arq.connections.RedisSettings.from_dsn(settings.redis_url))
+    return _redis_pool
 
 
 async def create_run(
@@ -101,6 +114,11 @@ async def create_run(
         raise
 
     await session.refresh(run)
+    await freeze_rubric(session, rubric_id)
+
+    pool = await _get_redis_pool()
+    await pool.enqueue_job("run_evaluation", str(run.id))
+
     return RunWithModels(run=run, model_ids=model_ids)
 
 

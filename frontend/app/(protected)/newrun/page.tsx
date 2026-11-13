@@ -1,30 +1,25 @@
 "use client";
 import SideBar from "@/Components/SidBar/SideBar";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Play, RotateCcw, UploadCloud, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Play, Plus, RotateCcw, UploadCloud, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-type InputMode = "prompt" | "dataset"; // Define the available input modes
+
+type InputMode = "prompt" | "dataset";
 const panel = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-5";
 const label = "mb-1.5 block text-sm font-medium text-slate-300";
 const field = "w-full rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0]";
-// Define the maximum allowed dataset rows and file size
+
 const MAX_ROWS = 1000;
 const MAX_BYTES = 5 * 1024 * 1024;
-// Define the minimum and maximum number of models that can be selected for a run
 const MIN_MODELS = 2;
 const MAX_MODELS = 8;
-// Local storage key used to save and restore the New Run draft
 const DRAFT_KEY = "tokenlens:new-run-draft";
-// Default average input tokens used when dataset token estimation is unavailable
 const DEFAULT_AVG_ITEM_TOKENS = 150;
-/* Cost Estimation Helpers */
-// Estimate the number of tokens based on the text length
-const approxTokens = (text: string) => Math.ceil(text.length / 4);
-// Format the estimated cost in USD
-const usd = (value: number) =>
-  value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+// The backend worker generates with a fixed output limit; it is not configurable per run.
+const BACKEND_MAX_OUTPUT_TOKENS = 512;
 
-/*Types and Interfaces*/
+const approxTokens = (text: string) => Math.ceil(text.length / 4);
+
 type ModelInfo = {
   id: string;
   provider: string;
@@ -36,16 +31,75 @@ type ModelInfo = {
 };
 
 type Rubric = {
-  id: string; name: string; description?: string
-  // Instructions sent to the Judge model
+  id: string;
+  name: string;
+  description?: string;
   judge_instructions?: string;
+  criteria?: any[];
+  scale_min?: number;
+  scale_max?: number;
 };
-type SavedDataset = { id: string; name: string; itemCount: number };
 
-// type for the paginated /datasets response (backend returns item_count, not itemCount)
+/*
+ * The evaluation worker builds every criterion with these required fields:
+ * name, label, weight (all weights sum to 1), description and level_descriptions
+ * covering exactly levels 1-5. A rubric missing any of them makes the run fail
+ * before the first model call, so we never let the user start a run with one.
+ */
+const LEVEL_KEYS = ["1", "2", "3", "4", "5"];
+
+function isRubricUsable(rubric: Rubric): boolean {
+  const criteria = rubric.criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0) return false;
+  let total = 0;
+  for (const c of criteria) {
+    if (!c || typeof c !== "object") return false;
+    if (typeof c.name !== "string" || !c.name.trim()) return false;
+    if (typeof c.label !== "string" || !c.label.trim()) return false;
+    if (typeof c.description !== "string") return false;
+    const weight = Number(c.weight);
+    if (c.weight == null || !Number.isFinite(weight) || weight <= 0) return false;
+    const levels = c.level_descriptions;
+    if (!levels || typeof levels !== "object") return false;
+    if (Object.keys(levels).sort().join(",") !== LEVEL_KEYS.join(",")) return false;
+    total += weight;
+  }
+  return Math.abs(total - 1) < 1e-6;
+}
+
+// Weights are 0.5 + 0.5 on purpose: they sum to exactly 1 with no float rounding issue.
+const DEFAULT_CRITERIA = [
+  {
+    name: "accuracy",
+    label: "Accuracy",
+    weight: 0.5,
+    description: "Factual accuracy and correctness of the answer.",
+    level_descriptions: {
+      "1": "Mostly wrong or misleading.",
+      "2": "Several factual errors.",
+      "3": "Mostly correct with notable gaps.",
+      "4": "Correct with minor omissions.",
+      "5": "Fully correct and complete.",
+    },
+  },
+  {
+    name: "clarity",
+    label: "Clarity",
+    weight: 0.5,
+    description: "Clarity, structure and formatting of the answer.",
+    level_descriptions: {
+      "1": "Confusing or unreadable.",
+      "2": "Hard to follow.",
+      "3": "Understandable but messy.",
+      "4": "Clear with minor issues.",
+      "5": "Very clear and well organized.",
+    },
+  },
+];
+
+type SavedDataset = { id: string; name: string; itemCount: number };
 type ApiDataset = { id: string; name: string; item_count: number };
 
-// backend sends prices as Decimal -> JSON string (e.g. "3.0000"), so allow string here
 type ApiModel = {
   id: string;
   provider: string;
@@ -71,8 +125,7 @@ type UploadState = {
   errors: string[];
   items: DatasetItem[];
 };
-/* CSV Parsing*/
-// Parse a CSV line into separate cells while handling quoted values
+// Parses a single line of CSV into an array of strings, handling quoted fields and escaped quotes.
 function parseCsvLine(line: string): string[] {
   const result: string[] = [];
   let current = "";
@@ -101,9 +154,7 @@ function parseCsvLine(line: string): string[] {
   result.push(current);
   return result;
 }
-/*Dataset Validation*/
-// Read a CSV or JSONL file and validate its format and contents
-// Check required fields, file size, and maximum number of rows
+// Validates the uploaded file, checking its type, size, and content structure, returning an UploadState object.
 async function validateFile(file: File): Promise<UploadState> {
   const errors: string[] = [];
   const items: DatasetItem[] = [];
@@ -115,11 +166,9 @@ async function validateFile(file: File): Promise<UploadState> {
   if (errors.length > 0) {
     return { fileName: file.name, file, rows: 0, avgInputTokens: 0, errors, items: [] };
   }
-  // Read the file contents and remove empty lines
   const content = await file.text();
   const lines = content.split(/\r?\n/).filter((line) => line.trim() !== "");
-  const totalRows =
-  extension === "csv" ? Math.max(0, lines.length - 1) : lines.length;
+  const totalRows = extension === "csv" ? Math.max(0, lines.length - 1) : lines.length;
   if (lines.length === 0) errors.push("The file is empty.");
   if (extension === "jsonl") {
     lines.forEach((line, index) => {
@@ -160,15 +209,13 @@ async function validateFile(file: File): Promise<UploadState> {
       });
     }
   }
-  // Check the maximum row limit and ensure that valid data exists
   if (totalRows > MAX_ROWS) {
-  errors.push(`Dataset cannot exceed ${MAX_ROWS} rows.`);
-}
+    errors.push(`Dataset cannot exceed ${MAX_ROWS} rows.`);
+  }
   if (items.length === 0 && errors.length === 0) errors.push("Dataset contains no valid questions.");
 
   const averageCharacters =
     items.length > 0 ? items.reduce((sum, item) => sum + item.input.length, 0) / items.length : 0;
-  // Return the validation results, including file information, errors, and parsed items
   return {
     fileName: file.name,
     file,
@@ -179,30 +226,77 @@ async function validateFile(file: File): Promise<UploadState> {
   };
 }
 
-/*API Configuration*/
-// Get the backend API base URL from environment variables
-// default changed from "/api" to the backend address (backend has no /api prefix)
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-//build the Authorization header from the saved login token
-// The backend uses Bearer tokens, not cookies. Login page must do: localStorage.setItem("token", access_token)
 const authHeaders = (): HeadersInit => {
-  const token = localStorage.getItem("token");
+  const token =
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
-
-// Send a GET request to the API and return the response as JSON
+// Fetches JSON data from the specified API path, handling authentication and errors.
 async function getJson<T>(path: string): Promise<T> {
-  //replaced `credentials: "include"` with the Authorization header
   const response = await fetch(`${API}${path}`, { headers: authHeaders() });
-  //clearer message when the token is missing/expired
   if (response.status === 401) throw new Error("Please log in again.");
-  if (!response.ok) throw new Error(`Failed to load ${path}`); // Throw an error if the API request fails
+  if (!response.ok) throw new Error(`Failed to load ${path}`);
   return response.json();
 }
 
-//extract a readable message from the backend's error response
-// FastAPI "detail" can be a string, an array (422 validation) or { errors: [] } (file upload)
+// ---- Settings helpers (inlined, no external file needed) ----
+type CurrentUser = { id: string; name: string; email: string; role: string; created_at: string };
+type SavedSettings = {
+  temperature: number;
+  repeats: number;
+  swapOrder: boolean;
+  defaultJudgeModelId: string;
+  defaultRubricId: string;
+  monthlySpendingCap: number;
+};
+function loadSettings(userId: string): SavedSettings | null {
+  try {
+    const raw = localStorage.getItem(`tokenlens:settings:${userId}`);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<SavedSettings>;
+    const clamp = (v: number, min: number, max: number) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min);
+    return {
+      temperature: clamp(Number(p.temperature ?? 0.2), 0, 2),
+      repeats: Math.round(clamp(Number(p.repeats ?? 3), 1, 5)),
+      swapOrder: Boolean(p.swapOrder),
+      defaultJudgeModelId: typeof p.defaultJudgeModelId === "string" ? p.defaultJudgeModelId : "",
+      defaultRubricId: typeof p.defaultRubricId === "string" ? p.defaultRubricId : "",
+      monthlySpendingCap: Math.max(0, Number(p.monthlySpendingCap ?? 0) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+async function getMonthlySpend(): Promise<number> {
+  const now = new Date();
+  let total = 0;
+  for (let page = 1; page <= 50; page++) {
+    const data = await getJson<{
+      items: { total_cost_usd: string | number; created_at: string }[];
+      size: number;
+      total: number;
+    }>(`/runs?page=${page}&size=100`);
+    let reachedOlder = false;
+    for (const run of data.items) {
+      const d = new Date(run.created_at);
+      if (d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth()) {
+        total += Number(run.total_cost_usd) || 0;
+      } else {
+        reachedOlder = true;
+      }
+    }
+    if (reachedOlder || page * data.size >= data.total) break;
+  }
+  return total;
+}
+
+// Represents the structure of an API error response, which may contain a detail message or an array of messages.
 type ApiError = { detail?: string | { msg: string }[] | { errors?: string[] } };
 function errorMessage(data: ApiError | null, fallback: string) {
   const d = data?.detail;
@@ -211,12 +305,9 @@ function errorMessage(data: ApiError | null, fallback: string) {
   if (d && "errors" in d && Array.isArray(d.errors)) return d.errors.join(", ");
   return fallback;
 }
-
-/*API Data Normalization*/
-//convert Decimal strings from the backend ("3.0000") into numbers
+// Converts a value to a number, returning null if the value is null or undefined.
 const toNum = (v: unknown) => (v == null ? null : Number(v));
-
-// Convert API model data into the standardized format used by the frontend
+// Normalizes an API model object into a ModelInfo structure, ensuring consistent field names and types.
 function normalizeModel(model: ApiModel): ModelInfo {
   return {
     id: model.id,
@@ -228,85 +319,107 @@ function normalizeModel(model: ApiModel): ModelInfo {
     isActive: model.is_active ?? model.isActive ?? true,
   };
 }
-/*Main Component*/
+// Main component for the New Run page, allowing users to configure and start a new evaluation run.
 export default function NewRunPage() {
-  // Initialize Next.js router for navigation after creating a Run
   const router = useRouter();
-  // Store the currently selected input mode
   const [mode, setMode] = useState<InputMode>("prompt");
-  // Store the user's prompt and optional system prompt
   const [systemPrompt, setSystemPrompt] = useState("");
   const [prompt, setPrompt] = useState("");
-  // Store the run name and execution settings
   const [runName, setRunName] = useState("");
   const [temperature, setTemperature] = useState(0.2);
-  const [maxTokens, setMaxTokens] = useState(1024);
+  const maxTokens = BACKEND_MAX_OUTPUT_TOKENS;
   const [repeats, setRepeats] = useState(3);
-  // Store models, rubrics, and saved datasets retrieved from the backend API
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [datasets, setDatasets] = useState<SavedDataset[]>([]);
-  // Manage API loading state and errors
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState("");
-  // Create a reference to the hidden file input element
   const fileRef = useRef<HTMLInputElement>(null);
-  // Store the uploaded file information and validation results
   const [upload, setUpload] = useState<UploadState | null>(null);
-  // Store the ID of the selected saved dataset
   const [datasetId, setDatasetId] = useState("");
-  // Track whether the user is dragging a file over the upload area
   const [dragging, setDragging] = useState(false);
-  // Store the IDs of the models selected for comparison
   const [selected, setSelected] = useState<string[]>([]);
+  // Monthly spending cap from Settings (USD, 0 = no limit).
+  const [spendingCap, setSpendingCap] = useState(0);
 
-  // Check whether the selected model count is within the allowed range (2–8)
-  const modelCountOk =
-    selected.length >= MIN_MODELS && selected.length <= MAX_MODELS;
+  // Modal states for adding a new Rubric
+  const [isRubricModalOpen, setIsRubricModalOpen] = useState(false);
+  const [newRubricName, setNewRubricName] = useState("");
+  const [newRubricInstructions, setNewRubricInstructions] = useState("");
+  const [addingRubric, setAddingRubric] = useState(false);
 
-  // Toggle a model's selection while enforcing the maximum limit
+  const handleAddRubric = async () => {
+    if (!newRubricName.trim()) {
+      alert("Please enter a rubric name.");
+      return;
+    }
+    setAddingRubric(true);
+    try {
+      const res = await fetch(`${API}/rubrics`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          name: newRubricName.trim(),
+          judge_instructions: newRubricInstructions.trim() || "Evaluate the model response accurately.",
+          scale_min: 1,
+          scale_max: 5,
+          criteria: DEFAULT_CRITERIA,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(errorMessage(data, "Could not add rubric."));
+
+      setIsRubricModalOpen(false);
+      setNewRubricName("");
+      setNewRubricInstructions("");
+
+      const updatedRubrics = await getJson<{ items: Rubric[] }>("/rubrics?page=1&size=100");
+      setRubrics(updatedRubrics.items || []);
+
+      const createdId = data?.id || updatedRubrics.items?.[0]?.id;
+      if (createdId) {
+        setRubricId(createdId);
+        const sel = updatedRubrics.items.find((r) => r.id === createdId);
+        if (sel?.judge_instructions) {
+          setJudgeInstructions(sel.judge_instructions);
+        }
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to create rubric.");
+    } finally {
+      setAddingRubric(false);
+    }
+  };
+// Checks if the number of selected models is within the allowed range.
+  const modelCountOk = selected.length >= MIN_MODELS && selected.length <= MAX_MODELS;
+// Toggles the selection of a model by its ID, ensuring the selection does not exceed the maximum allowed models.
   const toggleModel = (id: string) => {
     setSelected((current) => {
-      // Remove the model if it is already selected
       if (current.includes(id)) {
         return current.filter((item) => item !== id);
       }
-
-      // Prevent selecting more than the maximum allowed models
       if (current.length >= MAX_MODELS) return current;
-
-      // Add the newly selected model
       return [...current, id];
     });
   };
-  // Store the selected evaluation rubric and Judge model
+// State variables for rubric selection, judge model selection, and related instructions.
   const [rubricId, setRubricId] = useState("");
   const [judgeModelId, setJudgeModelId] = useState("");
-
-  // Store additional instructions for the Judge
   const [judgeInstructions, setJudgeInstructions] = useState("");
-
-  // Model names must always be hidden from the Judge (FR4.4)
-  // (not sent to the backend yet; the backend has no hide_model_names field)
-  const hideNames = true;
-
-  // Control whether answer order is swapped during evaluation
   const [swapOrder, setSwapOrder] = useState(false);
-
-  // Select a rubric and automatically load its description as Judge instructions
+// Selects a rubric by its ID, ensuring it is usable, and updates the judge instructions accordingly.
   const pickRubric = (id: string) => {
-    setRubricId(id);
     const rubric = rubrics.find((r) => r.id === id);
+    if (rubric && !isRubricUsable(rubric)) return;
+    setRubricId(id);
     setJudgeInstructions(rubric?.judge_instructions ?? "");
-
   };
-  // Store success and error messages related to file upload
+// State variables for error and success messages, as well as submission status.
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  // Track whether a Run is currently being submitted
   const [submitting, setSubmitting] = useState(false);
-
-  // Handle file selection and validation
+// Handles the file selection, validating the file and updating the upload state or error messages accordingly.
   const handleFile = async (file?: File) => {
     if (!file) return;
     setError("");
@@ -319,122 +432,107 @@ export default function NewRunPage() {
       setError("Could not read the selected file.");
     }
   };
-  // Remove the uploaded file and reset the input field
+// Removes the currently uploaded file, resetting the upload state and clearing the file input reference.
   const removeFile = () => {
     setUpload(null);
     if (fileRef.current) fileRef.current.value = "";
   };
-
+// Loads models, rubrics, and datasets from the API when the component mounts, handling loading state and errors.
   useEffect(() => {
     let mounted = true;
-    // Load models, rubrics, and datasets from the API when the component mounts
     async function loadData() {
       setLoading(true);
       setApiError("");
-      try { // Send three API requests in parallel
-        // new endpoints/shapes
-        //   - "/models?active=true" -> "/models" (non-admin users only get active models anyway)
-        //   - "/rubrics"  -> "/rubrics?page=1&size=100"  (returns { items, page, size, total })
-        //   - "/datasets" -> "/datasets?page=1&size=100" (returns { items, page, size, total })
-        const [modelsData, rubricsData, datasetsData] = await Promise.all([
+      try {
+        const [me, modelsData, rubricsData, datasetsData] = await Promise.all([
+          getJson<CurrentUser>("/auth/me"),
           getJson<ApiModel[]>("/models"),
           getJson<{ items: Rubric[] }>("/rubrics?page=1&size=100"),
           getJson<{ items: ApiDataset[] }>("/datasets?page=1&size=100"),
         ]);
-        // Ensure the component is still mounted before updating its state
         if (!mounted) return;
-        setModels(modelsData.map(normalizeModel));// Store the retrieved data and normalize the model objects
-        setRubrics(rubricsData.items); // items (was: rubricsData)
-        // items + map item_count -> itemCount (was: setDatasets(datasetsData))
+        setModels(modelsData.map(normalizeModel));
+        setRubrics(rubricsData.items || []);
         setDatasets(
-          datasetsData.items.map((d) => ({ id: d.id, name: d.name, itemCount: d.item_count }))
+          (datasetsData.items || []).map((d) => ({ id: d.id, name: d.name, itemCount: d.item_count }))
         );
+
+        // Apply the defaults the user saved in Settings (if any).
+        const saved = loadSettings(me.id);
+        if (saved) {
+          setTemperature(saved.temperature);
+          setRepeats(saved.repeats);
+          setSwapOrder(saved.swapOrder);
+          setSpendingCap(saved.monthlySpendingCap);
+
+          const judge = modelsData.map(normalizeModel).find((m) => m.id === saved.defaultJudgeModelId && m.isActive);
+          if (judge) setJudgeModelId(judge.id);
+
+          const rubric = (rubricsData.items || []).find((r) => r.id === saved.defaultRubricId);
+          if (rubric && isRubricUsable(rubric)) {
+            setRubricId(rubric.id);
+            setJudgeInstructions(rubric.judge_instructions ?? "");
+          }
+        }
       } catch (err) {
         if (!mounted) return;
         setApiError(err instanceof Error ? err.message : "Could not load project data.");
       } finally {
-        if (mounted) setLoading(false);// Stop the loading indicator after the requests finish
+        if (mounted) setLoading(false);
       }
     }
-    // Start loading the page data
     loadData();
-    return () => { // Prevent state updates if the component unmounts before requests finish
+    return () => {
       mounted = false;
     };
   }, []);
 
-  /*Derived Data*/
-  // Filter and return only active models for model selection
   const activeModels = useMemo(() => models.filter((m) => m.isActive), [models]);
-  // Temporarily use all active models because the API does not provide Judge eligibility yet.
   const judgeModels = activeModels;
-  /*Input Validation*/
-
-  // Find the selected saved dataset
   const savedDataset = datasets.find((d) => d.id === datasetId);
-
-  // Check whether the user has provided a valid input
+  const selectedRubric = rubrics.find((r) => r.id === rubricId);
+  const rubricOk = !!selectedRubric && isRubricUsable(selectedRubric);
+  const hasInvalidRubrics = rubrics.some((r) => !isRubricUsable(r));
+// Checks if there are any rubrics that are not usable, which may affect the ability to start a run.
   const hasInput =
     mode === "prompt"
       ? prompt.trim().length > 0
       : upload
         ? upload.errors.length === 0 && upload.rows > 0
         : !!savedDataset;
-
-  // Calculate the total number of dataset items
+// Determines the number of items to be processed based on the input mode and available data.
   const itemCount =
     mode === "prompt"
       ? prompt.trim() ? 1 : 0
       : upload
         ? upload.errors.length === 0 ? upload.rows : 0
         : (savedDataset?.itemCount ?? 0);
-
-  // Check whether all required fields are valid before starting a Run
+// Determines if the user can start a new run based on various conditions, including loading state, errors, input availability, model selection, and submission status.
   const canRun =
     !loading &&
     !apiError &&
     hasInput &&
     modelCountOk &&
-    !!rubricId &&
+    rubricOk &&
     judgeModels.some((model) => model.id === judgeModelId) &&
+    !selected.includes(judgeModelId) &&
     !submitting;
-
-
-  /*Cost Estimation*/
-
-  // Calculate the estimated model calls and comparison cost
+// Estimates the number of calls, judge calls, and comparison cost based on the selected models, input/output tokens, item count, repeats, and pricing information.
   const estimate = useMemo(() => {
-
-    // Get only the selected active models
-    const selectedModels = activeModels.filter((m) =>
-      selected.includes(m.id)
-    );
-
-    // Estimate input tokens based on the selected input mode
+    const selectedModels = activeModels.filter((m) => selected.includes(m.id));
     const inputTokens =
       mode === "prompt"
         ? approxTokens(systemPrompt + prompt)
         : upload?.avgInputTokens || DEFAULT_AVG_ITEM_TOKENS;
-
-    // Estimate output tokens using half of the maximum output limit
     const outputTokens = Math.round(maxTokens * 0.5);
-
-    // Calculate the total number of model calls
     const calls = itemCount * selectedModels.length * repeats;
-
-    // Double the judge calls when answer order swapping is enabled
     const judgeCalls = calls * (swapOrder ? 2 : 1);
-
-    // Check whether at least one model is selected and all selected models have pricing
     const hasPrices =
       selectedModels.length > 0 &&
       selectedModels.every(
-        (m) =>
-          m.inputPricePerMtok !== null &&
-          m.outputPricePerMtok !== null
+        (m) => m.inputPricePerMtok !== null && m.outputPricePerMtok !== null
       );
 
-    // Calculate the estimated comparison cost
     const comparisonCost = hasPrices
       ? selectedModels.reduce(
         (sum, m) =>
@@ -442,88 +540,73 @@ export default function NewRunPage() {
           itemCount *
           repeats *
           (
-            (
-              inputTokens * m.inputPricePerMtok! +
-              outputTokens * m.outputPricePerMtok!
-            ) / 1_000_000
+            (inputTokens * m.inputPricePerMtok! + outputTokens * m.outputPricePerMtok!) /
+            1_000_000
           ),
         0
       )
       : null;
+// Returns the estimated number of calls, judge calls, and comparison cost for the current configuration.
+    return { calls, judgeCalls, comparisonCost };
+  }, [activeModels, selected, mode, systemPrompt, prompt, upload, itemCount, maxTokens, repeats, swapOrder]);
 
-    return {
-      calls,
-      judgeCalls,
-      comparisonCost,
-    };
-
-  }, [
-    activeModels,
-    selected,
-    mode,
-    systemPrompt,
-    prompt,
-    upload,
-    itemCount,
-    maxTokens,
-    repeats,
-    swapOrder,
-  ]);
-  /*Run Submission*/
-  // The backend does not accept prompt / items / system_prompt / max_output_tokens /
-  // judge_instructions / hide_model_names. It only accepts dataset_id, so the payload
-  // is now built inline inside startRun after the dataset is created.
-
-  // Submit the Run creation request to the backend
   const startRun = async () => {
     if (!canRun) return;
-
     setSubmitting(true);
     setError("");
     setSuccess("");
-
+// Validates the run name, selected models, and other parameters before starting a new run, handling errors and navigating to the new run page upon success.
     try {
       const name = runName.trim() || `Run ${new Date().toLocaleString()}`;
       if (selected.length < MIN_MODELS || selected.length > MAX_MODELS) {
         throw new Error("Please select between 2 and 8 models.");
       }
-
       if (new Set(selected).size !== selected.length) {
         throw new Error("Duplicate models are not allowed.");
+      }
+      if (selected.includes(judgeModelId)) {
+        throw new Error("Value error, judge_model_id must not be one of model_ids.");
       }
       if (name.length > 150) {
         throw new Error("Run name cannot exceed 150 characters.");
       }
+      if (spendingCap > 0) {
+        const spent = await getMonthlySpend();
+        const projected = spent + (estimate.comparisonCost ?? 0);
+        if (projected > spendingCap) {
+          throw new Error(
+            `Monthly spending cap of $${spendingCap.toFixed(2)} would be exceeded ` +
+              `(spent $${spent.toFixed(4)} + estimated $${(estimate.comparisonCost ?? 0).toFixed(4)}). ` +
+              `Raise the cap in Settings to continue.`
+          );
+        }
+      }
       let finalDatasetId = datasetId;
 
-      // Step 1a: Single Prompt -> POST /datasets/prompt (creates a dataset with one item)
       if (mode === "prompt") {
         const res = await fetch(`${API}/datasets/prompt`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ name, input: prompt.trim(), system_prompt: systemPrompt.trim() }),
+          body: JSON.stringify({ name, input: prompt.trim(), description: systemPrompt.trim() }),
         });
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(errorMessage(data, "Could not save the prompt."));
         finalDatasetId = data.id;
-
-        // Step 1b: Uploaded file -> POST /datasets/upload (multipart/form-data)
       } else if (upload) {
         const form = new FormData();
         form.append("name", name);
+        if (systemPrompt.trim()) form.append("description", systemPrompt.trim());
         form.append("file", upload.file);
         const res = await fetch(`${API}/datasets/upload`, {
           method: "POST",
-          headers: authHeaders(), // no Content-Type here: the browser sets the multipart boundary
+          headers: authHeaders(),
           body: form,
         });
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(errorMessage(data, "Could not upload the dataset."));
         finalDatasetId = data.id;
       }
-      // Step 1c: saved dataset -> nothing to create, datasetId is already set
-
-      // Step 2: create the Run with the dataset id
+// Creates a new run with the specified parameters, including the dataset ID, rubric ID, selected models, judge model, repeats, temperature, and swap order. Handles errors and navigates to the new run page upon success.
       const response = await fetch(`${API}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -535,47 +618,27 @@ export default function NewRunPage() {
           judge_model_id: judgeModelId,
           repeats,
           temperature,
-          max_output_tokens: maxTokens,
           swap_order: swapOrder,
         }),
       });
-
+// Parses the response from the run creation request, checking for errors and ensuring an ID is returned. If successful, it removes the draft from local storage and navigates to the new run page.
       const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(errorMessage(data, "Could not start the run."));
-      }
-
-      if (!data?.id) {
-        throw new Error("Run was created, but the response does not contain an ID.");
-      }
-
+      if (!response.ok) throw new Error(errorMessage(data, `Could not start the run (HTTP ${response.status}).`));
+      if (!data?.id) throw new Error("Run was created, but the response does not contain an ID.");
+// Removes the saved draft from local storage and navigates to the newly created run's page.
       localStorage.removeItem(DRAFT_KEY);
-      router.push(`/runs/${data.id}`);
+      router.push(`/runresult/${data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setSubmitting(false);
     }
   };
-  /*Draft Management*/
-  // Save the current New Run configuration to localStorage
+
   const saveDraft = () => {
     const draft = {
-      mode,
-      systemPrompt,
-      prompt,
-      runName,
-      temperature,
-      maxTokens,
-      repeats,
-      selected,
-      rubricId,
-      judgeModelId,
-      judgeInstructions,
-      swapOrder,
-      datasetId,
+      mode, systemPrompt, prompt, runName, temperature, repeats,
+      selected, rubricId, judgeModelId, judgeInstructions, swapOrder, datasetId,
     };
-
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
       setSuccess("Draft saved successfully.");
@@ -584,72 +647,45 @@ export default function NewRunPage() {
       setError("Could not save the draft.");
     }
   };
-
-  // Restore the previously saved New Run configuration
+// Restores the saved draft from local storage, updating the component's state with the saved values. If no draft is found or an error occurs, it sets an appropriate error message.
   const restoreDraft = () => {
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
-
       if (!saved) {
         setError("No saved draft found.");
         return;
       }
-
       const draft = JSON.parse(saved);
-
-      // Restore the input configuration
       setMode(draft.mode ?? "prompt");
       setSystemPrompt(draft.systemPrompt ?? "");
       setPrompt(draft.prompt ?? "");
       setRunName(draft.runName ?? "");
-
-      // Restore the Run settings
       setTemperature(draft.temperature ?? 0.2);
-      setMaxTokens(draft.maxTokens ?? 1024);
       setRepeats(draft.repeats ?? 3);
-
-      // Restore only valid selected model IDs
+// Filters the selected models to ensure they are valid and active, updating the selected state accordingly.
       const validSelectedModels = Array.isArray(draft.selected)
         ? draft.selected.filter(
-          (id: string) =>
-            typeof id === "string" &&
-            activeModels.some((model) => model.id === id)
+          (id: string) => typeof id === "string" && activeModels.some((model) => model.id === id)
         )
         : [];
-
       setSelected(validSelectedModels);
-
-      // Restore the rubric and Judge model if they are still available
-      setRubricId(
-        rubrics.some((rubric) => rubric.id === draft.rubricId)
-          ? draft.rubricId
-          : ""
-      );
-
-      setJudgeModelId(
-        judgeModels.some((model) => model.id === draft.judgeModelId)
-          ? draft.judgeModelId
-          : ""
-      );
-
+// Validates the rubric ID and judge model ID from the draft, ensuring they are usable and exist in the current state. Updates the corresponding state variables accordingly.
+      setRubricId(rubrics.some((r) => r.id === draft.rubricId && isRubricUsable(r)) ? draft.rubricId : "");
+      setJudgeModelId(judgeModels.some((m) => m.id === draft.judgeModelId) ? draft.judgeModelId : "");
       setJudgeInstructions(draft.judgeInstructions ?? "");
       setSwapOrder(draft.swapOrder ?? false);
-
-      // Restore the selected saved dataset
       setDatasetId(draft.datasetId ?? "");
-
-      // Uploaded files are not stored in localStorage
       setUpload(null);
       if (fileRef.current) fileRef.current.value = "";
-
       setSuccess("Draft restored successfully.");
       setError("");
     } catch {
       setError("Could not restore the saved draft.");
     }
   };
-  /*ui*/
+
   return (
+    // Main container with a dark background and light text, containing the sidebar and main content area.
     <div className="min-h-screen bg-[#060b1f] text-slate-200">
       <SideBar />
       <main className="min-w-0 px-4 pb-8 pt-20 sm:ml-64 sm:px-8">
@@ -660,20 +696,14 @@ export default function NewRunPage() {
               Configure your test, select models and run comparisons.
             </p>
           </div>
-          {/* Draft Management and Mode Selection Buttons */}
           <div className="flex flex-wrap items-center gap-2">
-
-            {/* Restore a previously saved draft */}
             <button
               onClick={restoreDraft}
               disabled={loading || !!apiError}
               className="flex items-center gap-2 rounded-lg border border-[#2a3a78] px-4 py-2.5 text-sm hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <RotateCcw size={15} />
-              Restore Draft
+              <RotateCcw size={15} /> Restore Draft
             </button>
-
-            {/* Save the current configuration as a draft */}
             <button
               onClick={saveDraft}
               disabled={loading}
@@ -681,8 +711,6 @@ export default function NewRunPage() {
             >
               Save as Draft
             </button>
-
-            {/* Mode selection buttons */}
             <div role="tablist" className="flex gap-2 text-sm">
               {(["prompt", "dataset"] as const).map((m) => (
                 <button
@@ -690,37 +718,33 @@ export default function NewRunPage() {
                   role="tab"
                   aria-selected={mode === m}
                   onClick={() => setMode(m)}
-                  className={`rounded-lg px-4 py-2 font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6b7dff] ${mode === m
-                    ? "bg-[#3347e0] text-white"
-                    : "border border-[#223062] bg-[#0c1530] text-slate-300 hover:bg-[#101c3f]"
-                    }`}
+                  className={`rounded-lg px-4 py-2 font-medium transition-colors ${
+                    mode === m ? "bg-[#3347e0] text-white" : "border border-[#223062] bg-[#0c1530] text-slate-300 hover:bg-[#101c3f]"
+                  }`}
                 >
                   {m === "prompt" ? "Single Prompt" : "Upload Dataset"}
                 </button>
               ))}
             </div>
-
           </div>
         </header>
-        {/* Display a loading indicator while retrieving data from the API */}
+
         {loading && (
           <div className={`${panel} mb-5 flex items-center gap-3`}>
             <Loader2 className="animate-spin text-blue-400" />
             <span className="text-sm">Loading models and project data...</span>
           </div>
         )}
-        {/* Display an error message if loading data from the API fails */}
+
         {apiError && (
           <div className="mb-5 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
             <p className="flex items-center gap-2 text-sm text-red-300">
-              <AlertCircle size={17} />
-              {apiError}
+              <AlertCircle size={17} /> {apiError}
             </p>
           </div>
         )}
-        {/* Row 1: prompt / dataset  +  settings */}
+
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
-          {/* Section for entering a prompt, uploading a dataset, and configuring the system prompt */}
           <section className={panel}>
             {mode === "prompt" && (
               <div>
@@ -740,37 +764,19 @@ export default function NewRunPage() {
             {mode === "dataset" && (
               <div className="space-y-4">
                 <label className={label}>Upload your dataset</label>
-
                 <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragging(true);
-                  }}
+                  onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                   onDragLeave={() => setDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragging(false);
-                    handleFile(e.dataTransfer.files[0]);
-                  }}
+                  onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
                   onClick={() => fileRef.current?.click()}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      fileRef.current?.click();
-                    }
-                  }}
-                  className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-10 text-center ${dragging ? "border-blue-400 bg-blue-500/10" : "border-[#2a3a78] bg-[#091129]"
-                    }`}
+                  className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-10 text-center ${
+                    dragging ? "border-blue-400 bg-blue-500/10" : "border-[#2a3a78] bg-[#091129]"
+                  }`}
                 >
                   <UploadCloud size={28} className="text-[#8ea0ff]" />
                   <span className="text-sm text-slate-300">Drop your CSV / JSONL file here or click to browse</span>
-                  <span className="text-xs text-slate-500">
-                    Required: input · Optional: expected_output
-                    <br />
-                    Maximum 1,000 rows · 5 MB
-                  </span>
                   <input
                     ref={fileRef}
                     type="file"
@@ -787,26 +793,15 @@ export default function NewRunPage() {
                         <FileSpreadsheet size={18} className="text-blue-400" />
                         <span className="text-sm">{upload.fileName}</span>
                       </div>
-                      <button
-                        onClick={removeFile}
-                        aria-label="Remove file"
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X size={17} />
-                      </button>
+                      <button onClick={removeFile} className="text-slate-400 hover:text-white"><X size={17} /></button>
                     </div>
-
                     {upload.errors.length === 0 ? (
                       <p className="mt-2 flex items-center gap-2 text-xs text-emerald-300">
-                        <CheckCircle2 size={14} />
-                        {upload.rows} questions ready
+                        <CheckCircle2 size={14} /> {upload.rows} questions ready
                       </p>
                     ) : (
-                      upload.errors.map((message, index) => (
-                        <p key={index} className="mt-2 flex gap-2 text-xs text-red-300">
-                          <AlertCircle size={14} />
-                          {message}
-                        </p>
+                      upload.errors.map((msg, idx) => (
+                        <p key={idx} className="mt-2 flex gap-2 text-xs text-red-300"><AlertCircle size={14} /> {msg}</p>
                       ))
                     )}
                   </div>
@@ -818,22 +813,19 @@ export default function NewRunPage() {
                     id="saved-ds"
                     value={datasetId}
                     disabled={!!upload}
-                    onChange={(e) => {setDatasetId(e.target.value);
-                      if (e.target.value) removeFile(); // Clear the uploaded file if a saved dataset is selected
-                    }}
+                    onChange={(e) => { setDatasetId(e.target.value); if (e.target.value) removeFile(); }}
                     className={field}
                   >
                     <option value="">Select a dataset...</option>
                     {datasets.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name} · {d.itemCount} items
-                      </option>
+                      <option key={d.id} value={d.id}>{d.name} · {d.itemCount} items</option>
                     ))}
                   </select>
                 </div>
               </div>
             )}
-
+{/*Conditionally renders the system prompt input field if the mode is "prompt" or if the mode is "dataset" and a file has been uploaded. This allows users to provide an optional system prompt for their evaluation run.*/}
+            {(mode === "prompt" || (mode === "dataset" && !!upload)) && (
             <div className="mt-5">
               <label htmlFor="system-prompt" className={label}>System prompt (optional)</label>
               <textarea
@@ -845,8 +837,9 @@ export default function NewRunPage() {
                 className={field}
               />
             </div>
+            )}
           </section>
-          {/* Row 1: settings */}
+
           <section className={panel}>
             <h2 className="mb-4 font-semibold text-white">Run Settings</h2>
             <div className="space-y-5">
@@ -878,20 +871,6 @@ export default function NewRunPage() {
                 </div>
               </div>
               <div>
-                <label htmlFor="max-tokens" className={label}>Max Output Tokens</label>
-                <input
-                  id="max-tokens"
-                  type="number"
-                  min={1}
-                  max={32000}
-                  value={maxTokens}
-                  onChange={(e) =>
-                    setMaxTokens(Math.min(32000, Math.max(1, Number(e.target.value) || 1)))
-                  }
-                  className={field}
-                />
-              </div>
-              <div>
                 <label htmlFor="repeats" className={label}>Repeats</label>
                 <select
                   id="repeats"
@@ -907,63 +886,44 @@ export default function NewRunPage() {
             </div>
           </section>
         </div>
-        {/* Row 2: model selection  +  judge configuration */}
-        {/* Section for selecting models to compare and displaying the number of selected models */}
+
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <section className={panel}>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="font-semibold text-white">Comparison Models</h2>
-              <span className="text-xs text-slate-400">
-                {selected.length} / {MAX_MODELS} selected
-              </span>
+              <span className="text-xs text-slate-400">{selected.length} / {MAX_MODELS} selected</span>
             </div>
             <p className="mb-4 text-xs text-slate-500">Select between 2 and 8 active models to compare.</p>
-
-            {activeModels.length === 0 ? (
-              <p className="rounded-lg bg-[#091129] p-4 text-sm text-slate-400">
-                No active models are currently available.
-              </p>
-            ) : (
-              <ul className="max-h-80 space-y-2 overflow-y-auto">
-                {activeModels.map((model) => {
-                  const checked = selected.includes(model.id);
-                  const locked = !checked && selected.length >= MAX_MODELS;
-                  return (
-                    <li key={model.id}>
-                      <label
-                        className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${checked ? "border-[#3347e0] bg-[#3347e0]/10" : "border-[#1b2750] bg-[#091129]"
-                          } ${locked ? "cursor-not-allowed opacity-50" : ""}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={locked}
-                          onChange={() => toggleModel(model.id)}
-                          className="h-4 w-4 accent-[#4a5df0]"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm text-white">{model.displayName}</span>
-                          <span className="text-xs text-slate-500">{model.provider}</span>
-                        </span>
-                        <span className="text-right text-xs text-slate-400">
-                          {model.inputPricePerMtok !== null && model.outputPricePerMtok !== null
-                            ? `$${model.inputPricePerMtok} / $${model.outputPricePerMtok}`
-                            : "Pricing unavailable"}
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {!modelCountOk && (
-              <p className="mt-3 text-xs text-amber-300">Please select between 2 and 8 models.</p>
-            )}
+            <ul className="max-h-80 space-y-2 overflow-y-auto">
+              {activeModels.map((model) => {
+                const checked = selected.includes(model.id);
+                const isJudge = model.id === judgeModelId;
+                const locked = isJudge || (!checked && selected.length >= MAX_MODELS);
+                return (
+                  <li key={model.id}>
+                    <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${
+                      checked ? "border-[#3347e0] bg-[#3347e0]/10" : "border-[#1b2750] bg-[#091129]"
+                    } ${locked ? "cursor-not-allowed opacity-50" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={locked}
+                        onChange={() => toggleModel(model.id)}
+                        className="h-4 w-4 accent-[#4a5df0]"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm text-white">{model.displayName}</span>
+                        <span className="text-xs text-slate-500">{model.provider}{isJudge ? " · selected as judge" : ""}</span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
-          {/* Row 2: judge configuration */}
+
           <section className={panel}>
             <h2 className="mb-4 font-semibold text-white">Judge Configuration</h2>
-
             <div className="mb-5">
               <label htmlFor="judge-model" className={label}>Judge Model</label>
               <select
@@ -973,17 +933,24 @@ export default function NewRunPage() {
                 className={field}
               >
                 <option value="">Select a judge model...</option>
-                {judgeModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.displayName} ({m.provider})
-                  </option>
+                {judgeModels.filter((m) => !selected.includes(m.id)).map((m) => (
+                  <option key={m.id} value={m.id}>{m.displayName} ({m.provider})</option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="rubric" className={label}>Evaluation Rubric</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="rubric" className="block text-sm font-medium text-slate-300">Evaluation Rubric</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsRubricModalOpen(true)}
+                    className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                  >
+                    <Plus size={14} /> Add Rubric
+                  </button>
+                </div>
                 <select
                   id="rubric"
                   value={rubricId}
@@ -991,10 +958,21 @@ export default function NewRunPage() {
                   className={field}
                 >
                   <option value="">Select a rubric...</option>
-                  {rubrics.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
+                  {rubrics.map((r) => {
+                    const usable = isRubricUsable(r);
+                    return (
+                      <option key={r.id} value={r.id} disabled={!usable}>
+                        {r.name}{usable ? "" : " (invalid - cannot be used)"}
+                      </option>
+                    );
+                  })}
                 </select>
+                {hasInvalidRubrics && (
+                  <p className="mt-2 text-xs text-amber-300">
+                    Some rubrics are missing fields the evaluation worker needs (label, weight, level descriptions),
+                    so they are disabled. Use “Add Rubric” to create a valid one.
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-5 text-sm text-slate-300">
@@ -1011,88 +989,91 @@ export default function NewRunPage() {
             </div>
           </section>
         </div>
-        {/*row 3 : Cost Estimation & Actions*/}
 
         <section className={`${panel} mt-5`}>
-
           <div className="flex flex-wrap items-center justify-between gap-5">
-
-            {/* Display the number of items, selected models, and repeats */}
             <div>
               <p className="text-sm text-slate-400">
-                {itemCount} {itemCount === 1 ? "item" : "items"}
-                {" × "}
-                {selected.length} models
-                {" × "}
-                {repeats} repeats
+                {itemCount} items × {selected.length} models × {repeats} repeats
               </p>
-
-              {/* Display the estimated number of model and judge calls */}
-              <p className="mt-1 text-xs text-slate-500">
-                {estimate.calls} model calls
-                {" + "}
-                {estimate.judgeCalls} judge calls
+              <p className="mt-1 text-xs text-slate-500 flex items-center gap-2">
+                <span>{estimate.calls} model calls + {estimate.judgeCalls} judge calls</span>
+                {estimate.comparisonCost !== null && (
+                  <span className="font-semibold text-blue-400">
+                    · Est. Cost: ${estimate.comparisonCost.toFixed(4)}
+                  </span>
+                )}
               </p>
             </div>
 
-            {/* Display the estimated comparison cost */}
-            <div>
-              <p className="text-xs text-slate-400">
-                Estimated Comparison Cost
-              </p>
-
-              <p className="mt-1 text-xl font-semibold text-white">
-                {estimate.comparisonCost !== null
-                  ? `≈ ${usd(estimate.comparisonCost)}`
-                  : "Unavailable"}
-              </p>
-
-              <p className="mt-1 text-xs text-slate-500">
-                Judge cost is not included in this estimate.
-              </p>
-            </div>
-
-            {/*row 3 : Run Evaluation Button */}
             <button
               onClick={startRun}
               disabled={!canRun}
               className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-7 py-2.5 text-sm font-medium text-white hover:bg-[#4256f0] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {submitting ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Play size={16} />
-              )}
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
               {submitting ? "Starting..." : "Run Evaluation"}
             </button>
-
           </div>
 
-          {/* Display success message */}
-          {success && (
-            <p className="mt-4 flex items-center gap-2 text-sm text-emerald-300">
-              <CheckCircle2 size={16} />
-              {success}
-            </p>
-          )}
-
-          {/* Display validation and API errors */}
-          {error && (
-            <p role="alert" className="mt-4 flex items-center gap-2 text-sm text-red-300">
-              <AlertCircle size={16} />
-              {error}
-            </p>
-          )}
-
-          {/* Explain what is missing before the Run can start */}
-          {!canRun && !loading && !apiError && (
-            <p className="mt-3 text-xs text-slate-500">
-              Complete the required fields, select 2 to 8 models,
-              choose a Judge Model, and select an evaluation rubric.
-            </p>
-          )}
-
+          {success && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-300"><CheckCircle2 size={16} /> {success}</p>}
+          {error && <p role="alert" className="mt-4 flex items-center gap-2 text-sm text-red-300"><AlertCircle size={16} /> {error}</p>}
         </section>
+
+        {/* Add Rubric modal */}
+        {isRubricModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className={`${panel} w-full max-w-md bg-[#0b132b] border-[#2a3a78] space-y-4 shadow-xl`}>
+              <div className="flex items-center justify-between border-b border-[#1b2750] pb-3">
+                <h3 className="text-lg font-semibold text-white">Add New Rubric</h3>
+                <button onClick={() => setIsRubricModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Rubric Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Helpfulness & Accuracy"
+                  value={newRubricName}
+                  onChange={(e) => setNewRubricName(e.target.value)}
+                  className={field}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Judge Instructions</label>
+                <textarea
+                  rows={3}
+                  placeholder="Instructions sent to judge model..."
+                  value={newRubricInstructions}
+                  onChange={(e) => setNewRubricInstructions(e.target.value)}
+                  className={field}
+                />
+              </div>
+
+              <p className="text-xs text-slate-500">
+                The rubric is scored 1–5 on two criteria, Accuracy and Clarity, weighted equally.
+              </p>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-[#1b2750]">
+                <button
+                  onClick={() => setIsRubricModalOpen(false)}
+                  className="rounded-lg border border-[#2a3a78] px-4 py-2 text-sm text-slate-300 hover:bg-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddRubric}
+                  disabled={addingRubric}
+                  className="flex items-center gap-2 rounded-lg bg-[#3347e0] px-5 py-2 text-sm font-medium text-white hover:bg-[#4256f0] disabled:opacity-50"
+                >
+                  {addingRubric && <Loader2 size={14} className="animate-spin" />}
+                  Save Rubric
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

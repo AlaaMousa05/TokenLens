@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Index, Numeric, SmallInteger, String, false, func
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Index, Numeric, SmallInteger, String, Text, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,6 +37,7 @@ class Run(Base):
     swap_order: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     status: Mapped[RunStatus] = mapped_column(SqlEnum(RunStatus, name="run_status", values_callable=enum_values))
     total_cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

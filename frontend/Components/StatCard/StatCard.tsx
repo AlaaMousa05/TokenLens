@@ -24,7 +24,7 @@ export default function StatCard({
     ? "text-green-500"
     : "text-red-500";
   return (
-    <div className="rounded-xl border border-gray-800 bg-[#0b132b] p-4 w-45 min-h-20">
+    <div className="rounded-xl border border-gray-800 bg-[#0b132b] p-4 w-full min-h-20">
       {/* Card Header */}
       <div className="mb-2 flex items-center justify-between ">
         <h3 className="text-sm text-r-400">{title}</h3>

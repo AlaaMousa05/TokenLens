@@ -41,11 +41,11 @@ COLUMNS = {
     User: "id name email password_hash role created_at",
     Model: "id provider model_name display_name input_price_per_mtok output_price_per_mtok context_window is_active updated_at",
     Dataset: "id owner_id name description source_format is_golden created_at",
-    DatasetItem: "id dataset_id position input_prompt expected_output metadata",
-    Rubric: "id owner_id name criteria scale_min scale_max judge_instructions created_at",
-    Run: "id user_id dataset_id rubric_id baseline_run_id judge_model_id name repeats temperature swap_order status total_cost_usd created_at finished_at",
+    DatasetItem: "id dataset_id position input_prompt expected_output category metadata",
+    Rubric: "id owner_id name criteria scale_min scale_max judge_instructions version is_frozen created_at",
+    Run: "id user_id dataset_id rubric_id baseline_run_id judge_model_id name repeats temperature swap_order status total_cost_usd error_message created_at finished_at",
     RunModel: "run_id model_id",
-    Result: "id run_id item_id model_id repeat_index output_text input_tokens output_tokens latency_ms cost_usd status error_message attempts created_at",
+    Result: "id run_id item_id model_id repeat_index output_text input_tokens output_tokens cached_tokens reasoning_tokens latency_ms cost_usd input_price_per_mtok output_price_per_mtok cached_input_price_per_mtok status completion_outcome tokens_estimated error_message attempts created_at",
     Judgment: "id result_id judge_model_id order_variant score criteria_scores reasoning judge_cost_usd created_at",
     RegressionAlert: "id run_id baseline_run_id model_id baseline_score new_score delta threshold created_at",
 }
@@ -150,9 +150,17 @@ class ModelSchemaTests(unittest.TestCase):
     def test_only_specified_columns_are_nullable(self):
         nullable = {
             ("dataset_items", "expected_output"),
+            ("dataset_items", "category"),
             ("runs", "baseline_run_id"),
             ("runs", "finished_at"),
+            ("runs", "error_message"),
             ("results", "error_message"),
+            ("results", "cached_tokens"),
+            ("results", "reasoning_tokens"),
+            ("results", "completion_outcome"),
+            ("results", "input_price_per_mtok"),
+            ("results", "output_price_per_mtok"),
+            ("results", "cached_input_price_per_mtok"),
         }
         actual = {
             (table.name, column.name)
@@ -176,7 +184,12 @@ class ModelSchemaTests(unittest.TestCase):
         numeric_columns = {
             Model: {"input_price_per_mtok": (10, 4), "output_price_per_mtok": (10, 4)},
             Run: {"temperature": (3, 2), "total_cost_usd": (12, 6)},
-            Result: {"cost_usd": (12, 6)},
+            Result: {
+                "cost_usd": (12, 6),
+                "input_price_per_mtok": (12, 6),
+                "output_price_per_mtok": (12, 6),
+                "cached_input_price_per_mtok": (12, 6),
+            },
             Judgment: {"score": (4, 2), "judge_cost_usd": (12, 6)},
             RegressionAlert: {
                 "baseline_score": (4, 2),

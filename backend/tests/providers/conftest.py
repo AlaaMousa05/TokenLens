@@ -10,6 +10,9 @@ def make_spec(
     model_name: str,
     reasoning_level: str | None = None,
     request_timeout_seconds: float | None = None,
+    uses_max_completion_tokens: bool = False,
+    accepts_custom_temperature: bool = True,
+    response_format: str | None = None,
 ) -> ModelSpec:
     return ModelSpec(
         provider=provider,
@@ -22,17 +25,15 @@ def make_spec(
         is_active=True,
         reasoning_level=reasoning_level,
         request_timeout_seconds=request_timeout_seconds,
+        uses_max_completion_tokens=uses_max_completion_tokens,
+        accepts_custom_temperature=accepts_custom_temperature,
+        response_format=response_format,
     )
 
 
 @pytest.fixture
-def groq_spec() -> ModelSpec:
-    return make_spec("groq", "openai/gpt-oss-120b")
-
-
-@pytest.fixture
-def nvidia_spec() -> ModelSpec:
-    return make_spec("nvidia_nim", "openai/gpt-oss-20b")
+def azure_spec() -> ModelSpec:
+    return make_spec("azure_ai_foundry", "gpt-4.1")
 
 
 @pytest.fixture
