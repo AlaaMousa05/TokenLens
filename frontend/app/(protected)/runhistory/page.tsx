@@ -1,237 +1,273 @@
+
 "use client";
 
-import { useState } from "react";
-import { 
-  BarChart2, 
-  ChevronDown, 
-  Search, 
-  Filter, 
-  ArrowUpDown,
-  CheckCircle2,
-  XCircle,
-  HelpCircle,
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  History,
+  Search,
   Clock,
   DollarSign,
-  Sparkles
+  ArrowUpRight,
 } from "lucide-react";
 
-export default function DetailedItemResultsPage() {
-  // قائمة العناصر/الأسئلة من الـ Dataset للاختيار بينها
-  const datasetItems = [
-    { id: "item-1", label: "Q1: Explain quantum computing in simple terms" },
-    { id: "item-2", label: "Q2: Write a Python function for binary search" },
-    { id: "item-3", label: "Q3: Summarize customer support refund policies" },
-  ];
+interface Run {
+  id: string;
+  dataset_id: string;
+  name: string;
+  status: string;
+  total_cost_usd: string;
+  created_at: string;
+  model_ids: string[];
+}
 
-  const [selectedItem, setSelectedItem] = useState(datasetItems[0].id);
+interface RunsResponse {
+  items: Run[];
+  page: number;
+  size: number;
+  total: number;
+}
 
-  // بيانات نتائج النماذج لهذه المسألة المحددة
-  const modelResults = [
-    {
-      id: "1",
-      modelName: "GPT-4o",
-      answer: "Quantum computing uses qubits that can exist in multiple states simultaneously due to superposition, allowing parallel computation...",
-      score: 82.4,
-      judgeReason: "Accurate explanation, clear terminology, and covers both superposition and entanglement effectively.",
-      latencyMs: 842,
-      cost: 0.0017,
-      status: "passed",
-    },
-    {
-      id: "2",
-      modelName: "Claude 3.5 Sonnet",
-      answer: "Imagine traditional computers as light switches (0 or 1). Quantum computers use qubits that can be both ON and OFF at the same time...",
-      score: 87.2,
-      judgeReason: "Exceptional analogy for non-technical audience. High clarity and structure.",
-      latencyMs: 620,
-      cost: 0.0010,
-      status: "passed",
-    },
-    {
-      id: "3",
-      modelName: "Llama 3 70B",
-      answer: "Quantum computing is a type of computation whose operations can harness the phenomena of quantum mechanics like superposition...",
-      score: 76.5,
-      judgeReason: "Factually correct but slightly too formal for a 'simple terms' prompt requirement.",
-      latencyMs: 655,
-      cost: 0.0004,
-      status: "passed",
-    },
-    {
-      id: "4",
-      modelName: "GPT-4o-mini",
-      answer: "It is a fast computer that uses quantum physics to solve hard math problems much quicker than regular laptops.",
-      score: 65.2,
-      judgeReason: "Over-simplified. Missed key concepts like qubits or superposition.",
-      latencyMs: 320,
-      cost: 0.0001,
-      status: "passed",
-    },
-    {
-      id: "5",
-      modelName: "Gemini 1.5 Pro",
-      answer: "Quantum computers leverage principles of quantum physics—specifically superposition and entanglement—to perform complex calculations...",
-      score: 75.8,
-      judgeReason: "Good depth, but slightly repetitive phrasing in the second paragraph.",
-      latencyMs: 860,
-      cost: 0.0008,
-      status: "passed",
-    },
-    {
-      id: "6",
-      modelName: "Mistral NeMo",
-      answer: "Quantum bits or qubits process complex queries simultaneously. Think of it as exploring all paths in a maze at once.",
-      score: 70.5,
-      judgeReason: "Decent analogy, but missed detailed explanation on superposition.",
-      latencyMs: 410,
-      cost: 0.0002,
-      status: "passed",
-    },
-    {
-      id: "7",
-      modelName: "Llama 3 8B",
-      answer: "A quantum computer is just a very powerful supercomputer that runs on special chips and cold temperatures.",
-      score: 51.8,
-      judgeReason: "Inaccurate distinction between supercomputers and quantum hardware.",
-      latencyMs: 290,
-      cost: 0.0001,
-      status: "regression",
-    },
-  ];
+export default function RunHistoryPage() {
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const fetchRuns = async () => {
+      try {
+        const token =
+          localStorage.getItem("access_token") ||
+          sessionStorage.getItem("access_token");
+
+        const API_URL =
+          process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+        const response = await fetch(`${API_URL}/runs`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+        if (response.status === 401) {
+          localStorage.removeItem("access_token");
+          sessionStorage.removeItem("access_token");
+          window.location.href = "/";
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to load run history.");
+        }
+
+        const data: RunsResponse = await response.json();
+        setRuns(data.items || []);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Something went wrong while loading runs."
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRuns();
+  }, []);
+
+  const getStatusStyle = (status: string) => {
+    switch (status.toLowerCase()) {
+      case "completed":
+      case "succeeded":
+        return "bg-emerald-950/60 text-emerald-400 border-emerald-800/40";
+      case "failed":
+        return "bg-rose-950/60 text-rose-400 border-rose-800/40";
+      case "running":
+        return "bg-blue-950/60 text-blue-400 border-blue-800/40";
+      case "queued":
+        return "bg-amber-950/60 text-amber-400 border-amber-800/40";
+      default:
+        return "bg-slate-800 text-slate-300 border-slate-700";
+    }
+  };
+
+  const formatDate = (date: string) => {
+    if (!date) return "—";
+
+    return new Date(date).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
+  const formatCost = (cost: string) => {
+    const value = Number(cost);
+    return Number.isFinite(value) ? `$${value.toFixed(4)}` : "—";
+  };
+
+  const filteredRuns = runs.filter((run) =>
+    run.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const getRunDetailsUrl = (run: Run) =>
+    `/detailed-results?run_id=${encodeURIComponent(
+      run.id
+    )}&dataset_id=${encodeURIComponent(run.dataset_id)}`;
 
   return (
     <div className="pl-72 pr-8 pt-8 pb-12 w-full min-h-screen bg-[#070b19] box-border text-slate-100 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* Header Section */}
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2.5">
-            <BarChart2 className="w-7 h-7 text-indigo-400" />
-            Detailed Item Results (Item-by-item Comparisons)
-          </h1>
-          <p className="text-sm text-slate-400">
-            Select a specific item from dataset to view detailed model scores, judge reasoning, latency, and costs side-by-side.
-          </p>
-        </div>
 
-        {/* Dataset Item Selector Card */}
-        <div className="bg-[#0b132b] border border-slate-800/80 rounded-xl p-5 shadow-lg space-y-3">
-          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Select a specific item from dataset
-          </label>
-          
-          <div className="relative max-w-xl">
-            <select
-              value={selectedItem}
-              onChange={(e) => setSelectedItem(e.target.value)}
-              className="w-full appearance-none bg-[#070b19] border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors pr-10 cursor-pointer shadow-inner"
-            >
-              {datasetItems.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <History className="w-7 h-7 text-indigo-400" />
+              Run History
+            </h1>
+            <p className="text-sm text-slate-400 mt-2">
+              View and manage all your previous evaluation runs.
+            </p>
+          </div>
+
+          <div className="bg-[#0b132b] border border-slate-800 rounded-lg px-4 py-2">
+            <p className="text-xs text-slate-400">Total Runs</p>
+            <p className="text-xl font-bold text-white">{runs.length}</p>
           </div>
         </div>
 
-        {/* Detailed Item Comparison Table */}
-        <div className="bg-[#0b132b] border border-slate-800/80 rounded-xl overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider bg-[#070b19]/60">
-                  <th className="py-3.5 px-4 min-w-37.5">Model Name</th>
-                  <th className="py-3.5 px-4 min-w-70">Model Answer</th>
-                  <th className="py-3.5 px-4 min-w-27.5">
-                    <div className="flex items-center gap-1 cursor-pointer hover:text-white">
-                      <span>Model Score</span>
-                      <ArrowUpDown className="w-3 h-3" />
-                    </div>
-                  </th>
-                  <th className="py-3.5 px-4 min-w-65">Judge Reason</th>
-                  <th className="py-3.5 px-4 min-w-35">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      <span>Latency / Cost</span>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
+        {/* Search */}
+        <div className="bg-[#0b132b] border border-slate-800/80 rounded-xl p-4">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search runs by name..."
+              className="w-full bg-[#070b19] border border-slate-800 rounded-lg py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-slate-500 outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
 
-              <tbody className="divide-y divide-slate-800/70 text-xs">
-                {modelResults.map((res) => {
-                  const isHighPerformance = res.score >= 80;
-                  const isLowPerformance = res.score < 60;
+        {/* Loading */}
+        {loading && (
+          <div className="bg-[#0b132b] border border-slate-800/80 rounded-xl p-10 text-center text-sm text-slate-400">
+            Loading run history...
+          </div>
+        )}
 
-                  return (
-                    <tr 
-                      key={res.id} 
-                      className={`hover:bg-slate-900/40 transition-colors ${
-                        res.status === "regression" ? "bg-red-500/5" : ""
-                      }`}
-                    >
-                      {/* Model Name */}
-                      <td className="py-4 px-4 font-semibold text-white whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${
-                            isHighPerformance ? "bg-emerald-400" : isLowPerformance ? "bg-red-400" : "bg-indigo-400"
-                          }`} />
-                          {res.modelName}
-                        </div>
-                      </td>
+        {/* Error */}
+        {!loading && error && (
+          <div className="bg-[#0b132b] border border-red-900/50 rounded-xl p-10 text-center text-sm text-red-400">
+            {error}
+          </div>
+        )}
 
-                      {/* Model Answer */}
-                      <td className="py-4 px-4 text-slate-300 leading-relaxed max-w-xs">
-                        <p className="line-clamp-3 text-xs text-slate-200" title={res.answer}>
-                          {res.answer}
-                        </p>
-                      </td>
+        {/* Table */}
+        {!loading && !error && (
+          <div className="bg-[#0b132b] text-slate-300 rounded-xl border border-slate-800/80 shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b border-slate-800/60">
+              <div>
+                <h2 className="text-lg font-semibold text-white">
+                  All Evaluation Runs
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  {filteredRuns.length} runs found
+                </p>
+              </div>
+            </div>
 
-                      {/* Score Badge */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${
-                            isHighPerformance
-                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              : isLowPerformance
-                              ? "bg-red-500/10 text-red-400 border-red-500/20"
-                              : "bg-indigo-500/10 text-indigo-300 border-indigo-500/20"
-                          }`}
-                        >
-                          {res.score.toFixed(1)}
-                        </span>
-                      </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-800/60 text-xs">
+                    <th className="py-4 px-6 font-normal">Name</th>
+                    <th className="py-4 px-4 font-normal">Models</th>
+                    <th className="py-4 px-4 font-normal">Status</th>
+                    <th className="py-4 px-4 font-normal">Total Cost</th>
+                    <th className="py-4 px-4 font-normal">Created At</th>
+                    <th className="py-4 px-6 font-normal text-right">Details</th>
+                  </tr>
+                </thead>
 
-                      {/* Judge Reasoning */}
-                      <td className="py-4 px-4 text-slate-400 text-xs leading-relaxed max-w-sm">
-                        <span className="italic text-slate-300 bg-[#070b19]/40 p-2 rounded-lg block border border-slate-800/40">
-                          &quot;{res.judgeReason}&quot;
-                        </span>
-                      </td>
+                <tbody className="divide-y divide-slate-800/40">
+                  {filteredRuns.length > 0 ? (
+                    filteredRuns.map((run) => (
+                      <tr
+                        key={run.id}
+                        onClick={() => {
+                          window.location.href = getRunDetailsUrl(run);
+                        }}
+                        className="hover:bg-slate-800/40 transition-colors cursor-pointer"
+                      >
+                        <td className="py-4 px-6 font-medium text-slate-200">
+                          {run.name}
+                        </td>
 
-                      {/* Latency & Cost */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1 text-slate-200 font-mono text-[11px]">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            <span>{res.latencyMs} ms</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-emerald-400 font-mono text-[11px]">
-                            <DollarSign className="w-3 h-3 text-emerald-500" />
-                            <span>${res.cost.toFixed(4)}</span>
-                          </div>
-                        </div>
+                        <td className="py-4 px-4 text-slate-400">
+                          {run.model_ids?.length
+                            ? `${run.model_ids.length} ${
+                                run.model_ids.length === 1 ? "model" : "models"
+                              }`
+                            : "—"}
+                        </td>
+
+                        <td className="py-4 px-4">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border ${getStatusStyle(
+                              run.status
+                            )}`}
+                          >
+                            {run.status}
+                          </span>
+                        </td>
+
+                        <td className="py-4 px-4 text-slate-300 font-medium">
+                          {formatCost(run.total_cost_usd)}
+                        </td>
+
+                        <td className="py-4 px-4 text-slate-400 text-xs whitespace-nowrap">
+                          {formatDate(run.created_at)}
+                        </td>
+
+                        <td className="py-4 px-6 text-right">
+                          <Link
+                            href={getRunDetailsUrl(run)}
+                            onClick={(event) => event.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                          >
+                            View Details
+                            <ArrowUpRight className="w-4 h-4" />
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="py-10 text-center text-slate-400"
+                      >
+                        {search
+                          ? "No runs match your search."
+                          : "No runs found."}
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-
+        )}
       </div>
     </div>
   );

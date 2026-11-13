@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 import app.dbconfig as dbconfig
@@ -31,6 +32,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TokenLens API", lifespan=lifespan)
+# by tharaa
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(model_router)
