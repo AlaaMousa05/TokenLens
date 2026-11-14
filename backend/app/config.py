@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = None
     azure_api_key: str | None = None
+    cors_allowed_origins: str = "*"
 
 
 settings = Settings()
