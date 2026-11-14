@@ -32,11 +32,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TokenLens API", lifespan=lifespan)
-# by tharaa
+cors_allowed_origins = [
+    origin.strip()
+    for origin in settings.cors_allowed_origins.split(",")
+    if origin.strip()
+]
+allow_all_origins = "*" in cors_allowed_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else cors_allowed_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
