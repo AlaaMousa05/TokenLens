@@ -3,10 +3,11 @@
 import SideBar from "@/Components/SidBar/SideBar";
 import { ClipboardList, Database, Save, Sliders, User } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { base_usrl } from "@/lib/base-url";
 
 // Only the profile name is saved on the server (PATCH /users/me); other preferences live in localStorage.
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = base_usrl;
 
 type CurrentUser = {
   id: string;

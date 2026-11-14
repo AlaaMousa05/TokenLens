@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { useRouter } from "next/navigation";
+import { base_usrl } from "@/lib/base-url";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -21,6 +22,7 @@ interface User {
   created_at: string;
 }
 export default function SideBar() {
+  const API_URL = base_usrl;
   // User dropdown state
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -31,6 +33,8 @@ export default function SideBar() {
   const handleLogout = () => {
     localStorage.removeItem("access_token");
     sessionStorage.removeItem("access_token");
+    localStorage.removeItem("role");
+    sessionStorage.removeItem("role");
 
     setUser(null);
     setIsOpen(false);
@@ -47,7 +51,7 @@ export default function SideBar() {
 
       try {
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/auth/me`,
+          `${API_URL}/auth/me`,
           {
             method: "GET",
             headers: {
@@ -68,7 +72,7 @@ export default function SideBar() {
     };
 
     fetchUser();
-  }, []);
+  }, [API_URL]);
 
   const initials = user?.name
     ? user.name
