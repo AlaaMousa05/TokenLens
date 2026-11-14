@@ -14,6 +14,7 @@ import {
   X,
   Save,
 } from "lucide-react";
+import { base_usrl } from "@/lib/base-url";
 
 // ================= Types =================
 
@@ -54,11 +55,7 @@ async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-
-  if (!apiUrl) {
-    throw new Error("NEXT_PUBLIC_API_URL is not configured.");
-  }
+  const apiUrl = base_usrl;
 
   const token =
     localStorage.getItem("access_token") ||

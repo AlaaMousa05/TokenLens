@@ -45,4 +45,5 @@ comments):
   can't leak into a browser bundle.
 - `NEXT_PUBLIC_API_URL` — the only value passed to `frontend`; not a
   secret, it's the URL the browser uses to reach the backend.
-
+- `CORS_ALLOWED_ORIGINS` — comma-separated frontend origins allowed by the
+  backend CORS middleware (defaults to `*`).

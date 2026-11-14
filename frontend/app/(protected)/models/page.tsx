@@ -3,6 +3,7 @@ import SideBar from "@/Components/SidBar/SideBar";
 import StatCard from "@/Components/StatCard/StatCard";
 import { AlertCircle, Cpu, Loader2, Plus, Search, Server, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { base_usrl } from "@/lib/base-url";
 
 const panel = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-5";
 const field = "w-full rounded-lg border border-[#223062] bg-[#091129] px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a5df0] focus:outline-none focus:ring-1 focus:ring-[#4a5df0]";
@@ -18,7 +19,7 @@ type ModelItem = {
   isActive: boolean;
 };
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = base_usrl;
 
 const authHeaders = (): HeadersInit => {
   const token = 
@@ -52,7 +53,8 @@ export default function ModelsPage() {
 
   // التحقق من صلاحية الـ Admin عند تحميل الصفحة
   useEffect(() => {
-    const userRole = localStorage.getItem("role");
+    const userRole =
+      localStorage.getItem("role") || sessionStorage.getItem("role");
     if (userRole === "admin") {
       setIsAdmin(true);
     }
