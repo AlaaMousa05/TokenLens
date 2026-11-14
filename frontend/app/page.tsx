@@ -5,8 +5,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { Eye, EyeOff, LockKeyhole, Mail, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { base_usrl } from "@/lib/base-url";
 
 export default function LoginPage() {
+  const API_URL = base_usrl;
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [email, setEmail] = useState("");
@@ -24,7 +26,7 @@ export default function LoginPage() {
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/login`,
+        `${API_URL}/auth/login`,
         {
           method: "POST",
           headers: {
@@ -59,12 +61,16 @@ export default function LoginPage() {
       // Remove previous tokens
       localStorage.removeItem("access_token");
       sessionStorage.removeItem("access_token");
+      localStorage.removeItem("role");
+      sessionStorage.removeItem("role");
 
       // Save access token
       if (rememberMe) {
         localStorage.setItem("access_token", data.access_token);
+        if (data.user?.role) localStorage.setItem("role", data.user.role);
       } else {
         sessionStorage.setItem("access_token", data.access_token);
+        if (data.user?.role) sessionStorage.setItem("role", data.user.role);
       }
 
       // Navigate to Dashboard

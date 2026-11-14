@@ -12,6 +12,7 @@ import {
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { base_usrl } from "@/lib/base-url";
 
 interface AdminDashboardData {
   totalUsers: number;
@@ -55,7 +56,7 @@ interface AdminDashboardData {
   }>;
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = base_usrl;
 // Helper function to get auth headers from localStorage/sessionStorage
 const authHeaders = (): HeadersInit => {
   const token =

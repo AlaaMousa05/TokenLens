@@ -9,6 +9,7 @@ import {
   CircleArrowOutUpLeft,
   Star,
 } from "lucide-react";
+import { base_usrl } from "@/lib/base-url";
 
 interface Run {
   id: string;
@@ -33,7 +34,7 @@ interface StatsData {
   avgQuality: number | null;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = base_usrl;
 
 export default function StatsCards() {
   const [stats, setStats] = useState<StatsData>({

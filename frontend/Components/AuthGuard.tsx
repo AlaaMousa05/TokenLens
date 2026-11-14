@@ -3,12 +3,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { base_usrl } from "@/lib/base-url";
 
 export default function AuthGuard({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const API_URL = base_usrl;
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
 
@@ -25,7 +27,7 @@ export default function AuthGuard({
 
       try {
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/auth/me`,
+          `${API_URL}/auth/me`,
           {
             method: "GET",
             headers: {
@@ -37,6 +39,8 @@ export default function AuthGuard({
         if (!response.ok) {
           localStorage.removeItem("access_token");
           sessionStorage.removeItem("access_token");
+          localStorage.removeItem("role");
+          sessionStorage.removeItem("role");
           router.replace("/");
           return;
         }
@@ -48,7 +52,7 @@ export default function AuthGuard({
     };
 
     verifyToken();
-  }, [router]);
+  }, [router, API_URL]);
 
   if (!authorized) {
     return (

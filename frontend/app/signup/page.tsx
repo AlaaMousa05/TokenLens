@@ -12,8 +12,10 @@ import {
   EyeOff,
   Sparkles,
 } from "lucide-react";
+import { base_usrl } from "@/lib/base-url";
 
 export default function SignupPage() {
+  const API_URL = base_usrl;
   const router = useRouter();
 
   const [name, setName] = useState("");
@@ -46,7 +48,7 @@ export default function SignupPage() {
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/register`,
+        `${API_URL}/auth/register`,
         {
           method: "POST",
           headers: {

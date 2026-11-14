@@ -31,6 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { base_usrl } from "@/lib/base-url";
 
 // Types 
 
@@ -100,7 +101,7 @@ interface SelectedResponse {
 
 //Constants
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = base_usrl;
 
 const MODEL_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#06b6d4"];
 

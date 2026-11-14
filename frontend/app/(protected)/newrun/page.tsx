@@ -3,6 +3,7 @@ import SideBar from "@/Components/SidBar/SideBar";
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Play, Plus, RotateCcw, UploadCloud, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { base_usrl } from "@/lib/base-url";
 
 type InputMode = "prompt" | "dataset";
 const panel = "rounded-xl border border-[#1b2750] bg-[#0b132b] p-5";
@@ -226,7 +227,7 @@ async function validateFile(file: File): Promise<UploadState> {
   };
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = base_usrl;
 
 const authHeaders = (): HeadersInit => {
   const token =
