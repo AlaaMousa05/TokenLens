@@ -2,13 +2,9 @@
 
 import { base_usrl } from "@/lib/base-url";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
-export default function AuthGuard({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function AuthGuardInner({ children }: { children: React.ReactNode }) {
   const API_URL = base_usrl;
   const router = useRouter();
   const pathname = usePathname();
@@ -43,13 +39,11 @@ export default function AuthGuard({
         const user = await response.json();
         const isAdmin = String(user?.role ?? "").toLowerCase() === "admin";
 
-        // الأدمن على الداشبورد العادية ← صفحة الأدمن
         if (isAdmin && pathname === "/dashboard") {
           router.replace("/admin");
           return;
         }
 
-        // غير الأدمن ما بدخل صفحة الأدمن
         if (!isAdmin && pathname.startsWith("/admin")) {
           router.replace("/dashboard");
           return;
@@ -73,4 +67,18 @@ export default function AuthGuard({
   }
 
   return <>{children}</>;
+}
+
+export default function AuthGuard({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#060b1f] flex items-center justify-center text-white">
+          Loading your workspace...
+        </div>
+      }
+    >
+      <AuthGuardInner>{children}</AuthGuardInner>
+    </Suspense>
+  );
 }
