@@ -10,6 +10,7 @@ import {
   DollarSign,
   ArrowUpRight,
 } from "lucide-react";
+import { base_usrl } from "@/lib/base-url";
 
 interface Run {
   id: string;
@@ -41,8 +42,7 @@ export default function RunHistoryPage() {
           localStorage.getItem("access_token") ||
           sessionStorage.getItem("access_token");
 
-        const API_URL =
-          process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const API_URL = base_usrl;
 
         const response = await fetch(`${API_URL}/runs`, {
           method: "GET",

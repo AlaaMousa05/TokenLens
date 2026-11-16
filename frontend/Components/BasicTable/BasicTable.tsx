@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { base_usrl } from "@/lib/base-url";
 
 interface Run {
   id: string;
@@ -32,8 +33,7 @@ export default function RecentRunsTable() {
           localStorage.getItem("access_token") ||
           sessionStorage.getItem("access_token");
 
-        const API_URL =
-          process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const API_URL = base_usrl;
 
         const response = await fetch(`${API_URL}/runs`, {
           method: "GET",
