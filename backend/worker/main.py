@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+
 from sqlalchemy import select
 
 import app.dbconfig as dbconfig

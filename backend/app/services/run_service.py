@@ -41,7 +41,11 @@ _redis_pool: Any = None
 async def _get_redis_pool() -> Any:
     global _redis_pool
     if _redis_pool is None:
-        _redis_pool = await arq.create_pool(redis_settings_from_url(settings.redis_url))
+        rs = redis_settings_from_url(settings.redis_url)
+        rs.conn_timeout = 10
+        rs.conn_retries = 10
+        rs.conn_retry_delay = 2
+        _redis_pool = await arq.create_pool(rs)
     return _redis_pool
 
 
