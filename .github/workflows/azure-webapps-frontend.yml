@@ -1,4 +1,3 @@
-
 name: Deploy TokenLens frontend to Azure
 
 on:
@@ -27,7 +26,7 @@ jobs:
       - name: Build the frontend
         working-directory: frontend
         env:
-          NEXT_PUBLIC_API_URL: https://gsg-fron-end-hmbteeahd6dbd4fp.uaenorth-01.azurewebsites.net
+          NEXT_PUBLIC_API_URL: https://front-a8efgycrdeh0a8ht.uaenorth-01.azurewebsites.net
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
           npm ci
