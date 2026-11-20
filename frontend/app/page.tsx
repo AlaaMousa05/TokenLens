@@ -120,6 +120,8 @@ export default function LoginPage() {
               Compare. Evaluate. Optimize.
             </p>
 
+            <p className="mt-2 text-xs text-gray-500">v1.5</p>
+
             <p className="mt-5 text-sm leading-7 text-gray-400 max-w-sm">
               Test and compare multiple AI models, evaluate their responses,
               track token usage and costs, and find the best model for your
