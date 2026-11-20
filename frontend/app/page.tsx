@@ -1,11 +1,11 @@
 
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { Eye, EyeOff, LockKeyhole, Mail, Sparkles } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { base_usrl } from "@/lib/base-url";
+import { Eye, EyeOff, LockKeyhole, Mail, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 export default function LoginPage() {
   const API_URL = base_usrl;
@@ -74,7 +74,7 @@ export default function LoginPage() {
       }
 
       // Navigate to Dashboard
-      router.push("/dashboard");
+      router.push(data.user?.role === "admin" ? "/admin" : "/dashboard");
 
     } catch (err) {
       if (err instanceof TypeError) {
@@ -119,6 +119,8 @@ export default function LoginPage() {
             <p className="mt-6 text-lg text-gray-300">
               Compare. Evaluate. Optimize.
             </p>
+
+            <p className="mt-2 text-xs text-gray-500">v1.5</p>
 
             <p className="mt-5 text-sm leading-7 text-gray-400 max-w-sm">
               Test and compare multiple AI models, evaluate their responses,
