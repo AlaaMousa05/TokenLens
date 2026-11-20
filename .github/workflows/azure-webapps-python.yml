@@ -1,0 +1,39 @@
+name: Deploy TokenLens backend to Azure
+
+on:
+  push:
+    branches: [feature/backend-api]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Package backend and dependencies
+        run: |
+          git archive --format=zip -o source.zip HEAD:backend -- . \
+            ':(exclude)TestDBRender.py' \
+            ':(exclude,glob)**/*.db' \
+            ':(exclude,glob)**/.env*'
+          unzip -q source.zip -d deploy
+          mkdir -p deploy/seed
+          git show HEAD:backend/tokenlens.db > deploy/seed/tokenlens.db
+          python -m pip install --only-binary=:all: -r deploy/requirements.txt --target deploy/.deps
+          cd deploy
+          zip -qr ../backend.zip .
+
+      - name: Deploy to Azure
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: front
+          package: backend.zip
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
