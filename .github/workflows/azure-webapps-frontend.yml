@@ -1,3 +1,4 @@
+
 name: Deploy TokenLens frontend to Azure
 
 on:
@@ -14,10 +15,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: '26.x'
           cache: npm
@@ -36,13 +40,48 @@ jobs:
       - name: Package the Next.js server
         working-directory: frontend
         run: |
+          # Copy static files into standalone
           cp -R .next/static .next/standalone/.next/
+
+          # Copy public assets
           if [ -d public ]; then
             cp -R public .next/standalone/
           fi
+
+          # Set production start command
           cd .next/standalone
           npm pkg set 'scripts.start=HOSTNAME=0.0.0.0 node server.js'
-          zip -qr "$GITHUB_WORKSPACE/frontend.zip" . -x '.env*' '*/.env*'
+
+      - name: Package frontend with source files
+        working-directory: frontend
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/deploy"
+
+          # Copy standalone production application
+          cp -R .next/standalone/. "$GITHUB_WORKSPACE/deploy/"
+
+          # Copy original source files and configuration
+          for item in app src components hooks lib styles \
+                      package.json package-lock.json \
+                      next.config.js next.config.ts \
+                      tsconfig.json postcss.config.js \
+                      tailwind.config.js; do
+            if [ -e "$item" ]; then
+              cp -R "$item" "$GITHUB_WORKSPACE/deploy/"
+            fi
+          done
+
+          # Copy public assets if available
+          if [ -d public ]; then
+            cp -R public "$GITHUB_WORKSPACE/deploy/public"
+          fi
+
+          # Create deployment ZIP
+          cd "$GITHUB_WORKSPACE/deploy"
+
+          zip -qr "$GITHUB_WORKSPACE/frontend.zip" . \
+            -x '.env*' '*/.env*' \
+               'node_modules/*' '*/node_modules/*'
 
       - name: Deploy to Azure
         uses: azure/webapps-deploy@v3
