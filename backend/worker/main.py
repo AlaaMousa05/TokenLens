@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -39,6 +41,7 @@ from evaluation.providers.resolver import resolve_client
 from evaluation.registry import get_model_by_name
 
 _CANDIDATE_MAX_TOKENS = 512
+_CONCURRENCY = 2 # Limit concurrent tasks to 2.
 logger = logging.getLogger("arq.tokenlens.worker")
 
 
@@ -58,6 +61,16 @@ class RunContext:
     model_rows: list[Model]
     judge_model_row: Model
     rubric_row: Rubric
+
+
+@dataclass
+class _Job:
+    model_id: uuid.UUID
+    spec: ModelSpec
+    item_id: uuid.UUID
+    prompt: str
+    expected: str
+    repeat_index: int
 
 
 async def _load_run_context(session, run: Run) -> RunContext:
@@ -122,42 +135,45 @@ def _result_fields(response: ModelResponse) -> dict:
     }
 
 
-async def _score_result(
-    session,
-    judge: Judge,
-    judge_recorder: UsageRecorder,
-    judge_model_id: uuid.UUID,
-    result: Result,
-    swap_order: bool,
+async def _judge_calls(
+    client: ModelClient,
+    judge_spec: ModelSpec,
+    rubric: EvaluationRubric,
     policy: str,
     question: str,
     reference: str,
-) -> None:
-    """Score result once, or twice as order_variant 0/1 when swap_order is set.
+    answer: str,
+    swap_order: bool,
+) -> list[tuple[int, object, Decimal]]:
+    """Judge calls only (network, no DB access).
 
-    Judge.score() takes a single answer; there is no position to swap, so the
-    second call measures judge noise (repeat-scoring variance), not position bias.
+    Scores once, or twice as order_variant 0/1 when swap_order is set. Judge.score()
+    takes a single answer, so the second call measures judge noise (repeat-scoring
+    variance), not position bias.
+
+    A fresh UsageRecorder per job keeps judge cost correct when jobs run concurrently.
     """
+    recorder = UsageRecorder(client)
+    judge = Judge(recorder, judge_spec, rubric)
+    calls: list[tuple[int, object, Decimal]] = []
     for order_variant in range(2 if swap_order else 1):
-        logger.info(
-            "Judging started run_id=%s result_id=%s judge_model_id=%s variant=%s",
-            result.run_id, result.id, judge_model_id, order_variant,
-        )
-        cost_before = judge_recorder.total_cost
-        judgment = await judge.score(policy, question, reference, result.output_text)
-        judge_cost = judge_recorder.total_cost - cost_before
-        log = logger.info if judgment.status is JudgmentStatus.ok else logger.warning
-        log(
-            "Judging finished run_id=%s result_id=%s judge_model_id=%s variant=%s status=%s attempts=%s",
-            result.run_id, result.id, judge_model_id, order_variant, judgment.status.value, judgment.attempts,
-        )
+        cost_before = recorder.total_cost
+        judgment = await judge.score(policy, question, reference, answer)
+        calls.append((order_variant, judgment, recorder.total_cost - cost_before))
+    return calls
+
+
+def _add_judgments(session, judge_model_id: uuid.UUID, result_id: uuid.UUID, calls) -> None:
+    for order_variant, judgment, judge_cost in calls:
+        if not judgment.verdict:
+            print("JUDGE FAILED:", judgment.error_message, flush=True)
         criteria_scores = (
             {name: verdict.score for name, verdict in judgment.verdict.scores.items()} if judgment.verdict else {}
         )
         reasoning = judgment.verdict.overall_note if judgment.verdict else (judgment.error_message or "")
         session.add(
             Judgment(
-                result_id=result.id,
+                result_id=result_id,
                 judge_model_id=judge_model_id,
                 order_variant=order_variant,
                 score=judgment.weighted_total or Decimal("0"),
@@ -168,66 +184,74 @@ async def _score_result(
         )
 
 
-async def _generate_and_persist_result(
-    session, client: ModelClient, spec: ModelSpec, run: Run, model_row: Model, item: DatasetItem, repeat_index: int, policy: str
-) -> Result:
-    logger.info(
-        "Model call started run_id=%s model_id=%s item_id=%s repeat=%s",
-        run.id, model_row.id, item.id, repeat_index,
-    )
-    response = await client.complete(spec, item.input_prompt, policy, float(run.temperature), _CANDIDATE_MAX_TOKENS)
-    log = logger.info if response.status is CallStatus.ok else logger.warning
-    log(
-        "Model call finished run_id=%s model_id=%s item_id=%s repeat=%s status=%s attempts=%s latency_ms=%s",
-        run.id, model_row.id, item.id, repeat_index, response.status.value, response.attempts, response.latency_ms,
-    )
-    result = Result(
-        run_id=run.id,
-        item_id=item.id,
-        model_id=model_row.id,
-        repeat_index=repeat_index,
-        **_result_fields(response),
-    )
-    session.add(result)
-    await session.flush()
-    return result
-
-
 async def _run_models(session, context: RunContext) -> Decimal:
     client = _build_client()
-    judge_recorder = UsageRecorder(client)
     judge_spec = get_model_by_name(context.judge_model_row.model_name)
     specs: dict[uuid.UUID, ModelSpec] = {row.id: get_model_by_name(row.model_name) for row in context.model_rows}
     ensure_judge_not_judged(judge_spec, specs.values())
 
-    judge = Judge(judge_recorder, judge_spec, _build_rubric(context.rubric_row))
+    rubric = _build_rubric(context.rubric_row)
     policy = context.dataset.description or ""
+
+    # Copy plain values now: ORM objects expire after each commit.
+    temperature = float(context.run.temperature)
+    swap_order = context.run.swap_order
+    run_id = context.run.id
+    judge_model_id = context.judge_model_row.id
+
+    jobs = [
+        _Job(row.id, specs[row.id], item.id, item.input_prompt, item.expected_output or "", repeat_index)
+        for row in context.model_rows
+        for item in context.items
+        for repeat_index in range(context.run.repeats)
+    ]
+
+    sem = asyncio.Semaphore(_CONCURRENCY)
+    db_lock = asyncio.Lock()  # AsyncSession is not safe for concurrent use
     total_cost = Decimal("0")
     logger.info(
         "Evaluation configuration loaded run_id=%s models=%s items=%s repeats=%s judge_model_id=%s",
         context.run.id, len(context.model_rows), len(context.items), context.run.repeats, context.judge_model_row.id,
     )
 
-    for model_row in context.model_rows:
-        spec = specs[model_row.id]
-        for item in context.items:
-            for repeat_index in range(context.run.repeats):
-                result = await _generate_and_persist_result(
-                    session, client, spec, context.run, model_row, item, repeat_index, policy
+    async def process(job: _Job) -> None:
+        nonlocal total_cost
+        async with sem:
+            response = await client.complete(job.spec, job.prompt, policy, temperature, _CANDIDATE_MAX_TOKENS)
+            fields = _result_fields(response)
+            async with db_lock:  # AsyncSession is shared by the concurrent jobs.
+                result = Result(
+                    run_id=run_id,
+                    item_id=job.item_id,
+                    model_id=job.model_id,
+                    repeat_index=job.repeat_index,
+                    **fields,
                 )
-                total_cost += result.cost_usd
-                if result.status is ResultStatus.OK:
-                    await _score_result(
-                        session,
-                        judge,
-                        judge_recorder,
-                        context.judge_model_row.id,
-                        result,
-                        context.run.swap_order,
-                        policy,
-                        item.input_prompt,
-                        item.expected_output or "",
-                    )
+                session.add(result)
+                await session.flush()
+                result_id = result.id
+                total_cost += fields["cost_usd"]
+                run = await session.get(Run, run_id)
+                run.total_cost_usd = total_cost
+                await session.commit()
+
+            if response.status is CallStatus.ok:
+                calls = await _judge_calls(
+                    client, judge_spec, rubric, policy, job.prompt, job.expected,
+                    response.output_text, swap_order,
+                )
+                async with db_lock:
+                    _add_judgments(session, judge_model_id, result_id, calls)
+                    await session.commit()
+
+    tasks = [asyncio.create_task(process(job)) for job in jobs]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     return total_cost
 
@@ -248,8 +272,10 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
         try:
             context = await _load_run_context(session, run)
             total_cost = await _run_models(session, context)
+            run = await session.get(Run, uuid.UUID(run_id))
             run.status = RunStatus.COMPLETED
             run.total_cost_usd = total_cost
+            run.finished_at = datetime.now(timezone.utc)
             await session.commit()
             logger.info("Evaluation completed run_id=%s candidate_cost_usd=%s", run_id, total_cost)
         except Exception as exc:
@@ -258,6 +284,7 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
             run = await session.get(Run, uuid.UUID(run_id))
             run.status = RunStatus.FAILED
             run.error_message = str(exc)
+            run.finished_at = datetime.now(timezone.utc)
             await session.commit()
             raise
 
@@ -268,3 +295,4 @@ class WorkerSettings:
     on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url(settings.redis_url)
     max_jobs = 10
+    job_timeout = 3600

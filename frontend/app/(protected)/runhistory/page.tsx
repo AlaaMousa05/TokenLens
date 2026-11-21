@@ -118,9 +118,7 @@ export default function RunHistoryPage() {
   );
 
   const getRunDetailsUrl = (run: Run) =>
-    `/detailed-results?run_id=${encodeURIComponent(
-      run.id
-    )}&dataset_id=${encodeURIComponent(run.dataset_id)}`;
+    `/runresult/${encodeURIComponent(run.id)}`;
 
   return (
     <div className="pl-72 pr-8 pt-8 pb-12 w-full min-h-screen bg-[#070b19] box-border text-slate-100 font-sans">

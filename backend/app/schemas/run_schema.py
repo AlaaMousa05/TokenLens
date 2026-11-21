@@ -44,6 +44,7 @@ class RunPublic(BaseModel):
     swap_order: bool
     status: RunStatus
     total_cost_usd: Decimal
+    error_message: str | None = None
     created_at: datetime
     finished_at: datetime | None
     model_ids: list[uuid.UUID]
