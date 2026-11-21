@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import sys
+import traceback
 import uuid
 from decimal import Decimal
 from types import SimpleNamespace
@@ -54,10 +55,10 @@ asyncio.run(on_startup({}))
 
 @pytest.mark.parametrize("response", [ok_response(), failed_response("sensitive provider error")])
 def test_model_call_logs_status_without_content(worker, caplog, response):
-    run = SimpleNamespace(id=uuid.uuid4(), temperature=Decimal("0"))
+    run = SimpleNamespace(id=uuid.uuid4(), temperature=Decimal("0"), total_cost_usd=Decimal("0"))
     model = SimpleNamespace(id=uuid.uuid4())
     item = SimpleNamespace(id=uuid.uuid4(), input_prompt="private prompt")
-    session = SimpleNamespace(add=MagicMock(), flush=AsyncMock())
+    session = SimpleNamespace(add=MagicMock(), commit=AsyncMock())
     client = SimpleNamespace(complete=AsyncMock(return_value=response))
 
     with caplog.at_level(logging.INFO, logger=worker.logger.name):
@@ -84,7 +85,7 @@ def test_failed_judgment_logs_warning_without_response(worker, caplog):
     )
     judge = SimpleNamespace(score=AsyncMock(return_value=judgment))
     result = SimpleNamespace(id=uuid.uuid4(), run_id=uuid.uuid4(), output_text="private answer")
-    session = SimpleNamespace(add=MagicMock())
+    session = SimpleNamespace(add=MagicMock(), commit=AsyncMock())
     recorder = SimpleNamespace(total_cost=Decimal("0"))
     with caplog.at_level(logging.INFO, logger=worker.logger.name):
         asyncio.run(worker._score_result(
@@ -111,15 +112,18 @@ def test_evaluation_job_logs_outcome_and_preserves_status(worker, caplog, fail):
 
     async def invoke():
         with patch.object(worker.dbconfig, "_ensure_session_factory"), \
+             patch.object(worker.dbconfig, "ensure_run_update_version", new=AsyncMock()), \
              patch.object(worker.dbconfig, "SessionLocal", return_value=session), \
              patch.object(worker, "_load_run_context", new=AsyncMock(return_value=object())), \
              patch.object(worker, "_run_models", new=execute):
-            await worker.run_evaluation({"job_id": "job-1"}, str(run_id))
+            redis = SimpleNamespace(set=AsyncMock(return_value=True), eval=AsyncMock(return_value=1))
+            await worker.run_evaluation({"job_id": "job-1", "redis": redis}, str(run_id))
 
     with caplog.at_level(logging.INFO, logger=worker.logger.name):
         if fail:
-            with pytest.raises(ValueError):
+            with pytest.raises(worker.EvaluationFailedError) as raised:
                 asyncio.run(invoke())
+            assert "private error" not in "".join(traceback.format_exception(raised.value))
         else:
             asyncio.run(invoke())
     assert f"run_id={run_id}" in caplog.text

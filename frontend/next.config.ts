@@ -2,12 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  allowedDevOrigins: ["192.168.88.16"],
+  allowedDevOrigins: ["*", "192.168.88.5"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
     rules: {
-      "*.css": {
+      "globals.css": {
         loaders: ["@tailwindcss/turbopack"],
         as: "*.css",
       },

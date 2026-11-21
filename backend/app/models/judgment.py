@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Numeric, SmallInteger, Text, UniqueConstraint, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Numeric, SmallInteger, Text, UniqueConstraint, event, func, inspect, select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,3 +35,19 @@ class Judgment(Base):
 
     result: Mapped["Result"] = relationship(back_populates="judgments")
     judge_model: Mapped["Model"] = relationship(back_populates="judgments")
+
+
+@event.listens_for(Judgment, "after_insert")
+@event.listens_for(Judgment, "after_update")
+@event.listens_for(Judgment, "after_delete")
+def _judgment_changed(mapper, connection, target):
+    from app.models.result import Result
+    from app.models.run import Run
+
+    history = inspect(target).attrs.result_id.history
+    result_ids = {target.result_id, *history.deleted}
+    connection.execute(
+        Run.__table__.update()
+        .where(Run.id.in_(select(Result.run_id).where(Result.id.in_(result_ids))))
+        .values(update_version=Run.update_version + 1)
+    )

@@ -67,6 +67,65 @@ worker logs when using Docker Compose, run `docker compose logs -f backend worke
 Application progress logs omit prompts, responses, and credentials; framework
 exception logs and external logging systems may have different contents.
 
+### Live run updates
+
+Authenticated clients can `GET /runs/{run_id}/events` with an
+`Authorization: Bearer <access_token>` header. The owner receives an SSE
+`update` event with JSON `{"run_id":"<uuid>","status":"<status>"}` immediately
+and after committed changes; statuses are `queued`, `running`, `completed`,
+`failed`, or `cancelled`. Fetch the existing run and paginated results REST
+endpoints on each event. No provider token streaming is available: complete
+responses and individual judgments are committed as they arrive. A terminal
+update closes the stream. Connections are independent and reconnection always
+starts with the current committed state, rather than replaying event history.
+Polling occurs once per second, so rapid commits can be coalesced; the REST
+reload sees the latest state. Heartbeat comments keep idle streams active.
+Clients should reconnect after a disconnect or stream error; credentials must
+not be placed in the URL.
+
+The worker commits each response before judging and each judgment separately.
+Failures retain partial results and candidate cost; a restarted job reuses
+persisted results and judgments rather than repeating them. Judge costs remain
+on the judgments, while the run total is candidate cost as before.
+Workers use a renewable per-run Redis lease to prevent duplicate jobs from
+calling providers concurrently. A job that cannot acquire the lease defers
+using ARQ's retry mechanism; loss of the lease cancels work and defers the
+retry. All workers must use the same Redis instance. Leases expire after 60
+seconds if a worker dies; prolonged contention can exhaust ARQ's configured
+retry limit, without changing the original run. A provider call already in
+flight at a crash, lease expiry, or database commit failure can still be
+repeated and billed again. Application progress logs do not include prompts
+or responses.
+
+Deployment adds the `runs.update_version` column automatically: the API checks
+after `create_all`, and the worker checks before processing a job, so neither
+assumes Alembic ran. PostgreSQL and SQLite are supported. The database user
+must have permission to alter `runs`; a read-only database or failed migration
+prevents startup/job processing rather than silently disabling updates. Back up
+the database and allow for a brief schema lock before deploying. Deploy API and
+worker together: old workers can write results without notifying new streams.
+
+The Azure workflow packages the tracked `backend/tokenlens.db` as
+`seed/tokenlens.db`; it does not itself configure `DATABASE_URL` or copy that
+seed into a persistent location. Verify the app's actual database URL and
+persistent storage configuration before deployment. An existing writable
+database, or a writable copy of that older seed, is upgraded in place on first
+use; the packaged seed itself is not modified in Git.
+
+The additive upgrade does not stamp Alembic history. If managing schema with
+Alembic, run `python -m alembic upgrade head` from `backend` only after
+checking its current revision and schema. In particular, a `create_all`
+database with no Alembic revision but all `0002_execution_columns` columns
+must first be verified and stamped at `0002_execution_columns`; otherwise that
+older migration attempts to add existing columns. Revision 0003 safely skips
+the column if startup already added it. Automatic startup upgrade covers only
+this new column, not other missing historical migrations.
+
+The stream's change version is updated by the ORM when results or judgments change; code that writes these
+tables using bulk SQL or outside the application must also increment the
+affected run's `update_version` in the same transaction. New databases created
+by the application already include the column.
+
 Docker Compose continues to use the root `.env` and local Redis by default.
 If you set its `REDIS_URL` to the external URL, both containers use it, although
 Compose still starts its local Redis service.

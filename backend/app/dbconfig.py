@@ -1,7 +1,9 @@
 from typing import Any
+import logging
 
 from sqlalchemy.orm import DeclarativeBase
 
+logger = logging.getLogger("uvicorn.error.tokenlens")
 
 class Base(DeclarativeBase):
     pass
@@ -43,3 +45,33 @@ async def init_all_tables() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_run_update_version()
+
+
+async def ensure_run_update_version() -> None:
+    """Apply the additive live-update column to databases created before it existed."""
+    from sqlalchemy import inspect, text
+
+    _ensure_session_factory()
+
+    def has_column(conn):
+        inspector = inspect(conn)
+        if not inspector.has_table("runs"):
+            raise RuntimeError("The runs table is missing; start the API to initialize the database.")
+        return any(column["name"] == "update_version" for column in inspector.get_columns("runs"))
+
+    async with engine.connect() as conn:
+        if await conn.run_sync(has_column):
+            return
+
+    async with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "postgresql":
+            await conn.execute(text("SELECT pg_advisory_xact_lock(746251839)"))
+        elif dialect == "sqlite":
+            await conn.execute(text("BEGIN IMMEDIATE"))
+        else:
+            raise RuntimeError(f"Automatic run update migration is unsupported for database dialect {dialect}.")
+        if not await conn.run_sync(has_column):
+            await conn.execute(text("ALTER TABLE runs ADD COLUMN update_version BIGINT NOT NULL DEFAULT 0"))
+            logger.info("Added run update version column")

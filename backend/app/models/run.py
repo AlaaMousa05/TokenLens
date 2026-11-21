@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Index, Numeric, SmallInteger, String, Text, false, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SqlEnum, ForeignKey, Index, Numeric, SmallInteger, String, Text, false, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +40,7 @@ class Run(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    update_version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
 
     user: Mapped["User"] = relationship(back_populates="runs")
     dataset: Mapped["Dataset"] = relationship(back_populates="runs")
