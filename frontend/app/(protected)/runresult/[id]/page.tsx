@@ -1,6 +1,7 @@
 "use client";
 import SideBar from "@/Components/SidBar/SideBar";
 import { base_usrl } from "@/lib/base-url";
+import CostReceipt from "@/Components/CostReceipt";
 import {
   Award,
   BarChart2,
@@ -20,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { ReactNode, Suspense, use, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, Suspense, use, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Bar,
   BarChart,
@@ -36,11 +37,13 @@ import {
 // Types 
 
 interface ModelResult {
+  id: string;
   model: string;
   meanScore: number;
   stdDev: number;
   avgLatency: string;
   totalTokens: string;
+  tokenCount: number;
   totalCost: string;
   failures: number;
   scoredCount: number;
@@ -51,6 +54,7 @@ interface ModelResult {
 
 interface DetailedItem {
   id: number;
+  itemId: string;
   input: string;
   scores: {
     [key: string]: {
@@ -59,6 +63,7 @@ interface DetailedItem {
       tokens: string;
       response: string;
       failed?: boolean;
+      repeats: { index: number; response: string; score: number | null; latency: string; tokens: number; failed: boolean }[];
     };
   };
   bestModel: string;
@@ -82,6 +87,8 @@ interface RunData {
   rubricDescription?: string;
   avgScore?: number;
   totalCost: string;
+  judgeCost: number;
+  selectedModels: { id: string; name: string }[];
   totalTokens: string;
   duration: string;
   errorMessage?: string;
@@ -93,11 +100,7 @@ interface RunData {
   detailedResults?: DetailedItem[];
 }
 
-interface SelectedResponse {
-  model: string;
-  prompt: string;
-  data: { score: number | null; latency: string; tokens: string; response: string; failed?: boolean };
-}
+interface SelectedResponse { itemId: string; modelId: string }
 
 //Constants
 
@@ -141,11 +144,11 @@ function safeFileName(name: string) {
 }
 
 function buildCsv(run: RunData) {
-  const models = (run.modelsSummary || []).map((m) => m.model);
+  const models = run.modelsSummary || [];
   const header = [
     "#",
     "Input Prompt",
-    ...models.flatMap((m) => [`${m} - Score`, `${m} - Latency`, `${m} - Tokens`, `${m} - Status`]),
+    ...models.flatMap((m) => [`${m.model} - Score`, `${m.model} - Latency`, `${m.model} - Tokens`, `${m.model} - Status`]),
     "Best Model",
   ];
   // Each row is: [item id, input prompt, model1 score, model1 latency, model1 tokens, model1 status, ..., best model]
@@ -153,7 +156,7 @@ function buildCsv(run: RunData) {
     item.id,
     item.input,
     ...models.flatMap((m) => {
-      const r = item.scores[m];
+      const r = item.scores[m.id];
       if (!r) return ["", "", "", "N/A"];
       const status = r.failed ? "Failed" : r.score === null ? "Not scored" : "OK";
       return [r.score ?? "", r.latency, r.tokens, status];
@@ -166,6 +169,10 @@ function buildCsv(run: RunData) {
 function EmptyState({ text, className = "py-20" }: { text: string; className?: string }) {
   return <p className={`${className} text-center text-sm text-slate-500`}>{text}</p>;
 }
+
+const subscribeToMount = () => () => {};
+const mountedSnapshot = () => true;
+const serverSnapshot = () => false;
 
 function ChangeBadge({ value, goodWhenUp }: { value?: number; goodWhenUp: boolean }) {
   if (value === undefined || value === null) return null;
@@ -264,7 +271,7 @@ function QualityScatter({
                 <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={TOOLTIP_STYLE} />
                 {models.map((m, i) => (
                   <Scatter
-                    key={m.model}
+                    key={m.id}
                     name={m.model}
                     data={[{ x: Number(getX(m)) || 0, y: Number(m.meanScore) || 0 }]}
                     fill={MODEL_COLORS[i % MODEL_COLORS.length]}
@@ -277,7 +284,7 @@ function QualityScatter({
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-4 text-xs text-slate-400">
         {models.map((m, i) => (
-          <span key={m.model} className="flex items-center gap-1.5">
+          <span key={m.id} className="flex items-center gap-1.5">
             <span
               className="h-2 w-2 rounded-full"
               style={{ backgroundColor: MODEL_COLORS[i % MODEL_COLORS.length] }}
@@ -322,11 +329,12 @@ type ApiResult = {
   cost_usd: string | number;
   status: string;
   error_message: string | null;
-  judgments: { score: string | number }[];
+  judgments: { score: string | number; judge_cost_usd: string | number }[];
 };
 // The backend returns the dataset and rubric with the following shapes.
 type ApiDataset = { name: string };
 type ApiRubric = { name: string; criteria?: { name?: string }[]; scale_min: number; scale_max: number };
+type ApiModel = { id: string; display_name: string };
 
 const authHeaders = (): HeadersInit => {
   const token =
@@ -338,7 +346,7 @@ const authHeaders = (): HeadersInit => {
 };
 // Fetch a JSON resource from the backend API, throwing an error if the response is not OK.
 async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { headers: authHeaders(), signal });
+  const res = await fetch(`${API_URL}${path}`, { headers: authHeaders(), signal, cache: "no-store" });
   if (!res.ok) {
     throw new Error(
       res.status === 401
@@ -354,13 +362,14 @@ async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function fetchAllResults(runId: string, signal: AbortSignal): Promise<ApiResult[]> {
   const size = 200;
   const all: ApiResult[] = [];
-  for (let page = 1; page <= 100; page++) {
+  for (let page = 1; ; page++) {
     const data = await apiGet<{ items: ApiResult[]; total: number }>(
       `/runs/${runId}/results?page=${page}&size=${size}`,
       signal
     );
     all.push(...data.items);
-    if (all.length >= data.total || data.items.length === 0) break;
+    if (all.length >= data.total) break;
+    if (!data.items.length) throw new Error("Could not load all result pages.");
   }
   return all;
 }
@@ -372,13 +381,13 @@ const stdDev = (xs: number[]) => {
   return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1));
 };
 const round = (n: number, digits = 1) => Math.round(n * 10 ** digits) / 10 ** digits;
-const fmtUsd = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+const fmtUsd = (n: number) => (n < 0.0001 ? `$${n.toFixed(6)}` : n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
 const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 const fmtSeconds = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
 const fmtDuration = (ms: number) =>
   ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
 
-function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | null, rubric: ApiRubric | null): RunData {
+function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | null, rubric: ApiRubric | null, models: ApiModel[]): RunData {
   const min = rubric?.scale_min ?? 1;
   const max = rubric?.scale_max ?? 5;
   // The backend stores judge scores on the rubric scale (e.g. 1-5); the UI shows 0-100.
@@ -407,16 +416,18 @@ function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | n
     const tokens = rs.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0);
     const avgLatencyMs = mean(okResults.map((r) => r.latency_ms));
     return {
+      id: modelId,
       model: rs[0].model_display_name,
       meanScore: round(mean(scores)),
       stdDev: round(stdDev(scores)),
       avgLatency: fmtSeconds(avgLatencyMs),
       totalTokens: fmtTokens(tokens),
+      tokenCount: tokens,
       totalCost: fmtUsd(cost),
       failures: rs.filter((r) => r.status !== "ok").length,
       scoredCount: scores.length,
       totalCalls: rs.length,
-      costVal: round(cost, 6),
+      costVal: cost,
       latencyVal: round(avgLatencyMs / 1000, 2),
     };
   });
@@ -430,6 +441,8 @@ function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | n
 
   const detailedResults: DetailedItem[] = items.map((rs, index) => {
     const scores: DetailedItem["scores"] = {};
+    let bestScore = -Infinity;
+    const winners: string[] = [];
     for (const modelId of orderedModelIds) {
       const mine = rs.filter((r) => r.model_id === modelId);
       if (mine.length === 0) continue;
@@ -437,31 +450,37 @@ function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | n
       const scored = mine.map(resultScore).filter((v): v is number => v !== null);
       const score = scored.length ? round(mean(scored)) : null;
       const first = [...mine].sort((a, b) => a.repeat_index - b.repeat_index)[0];
-      scores[name] = {
+      scores[modelId] = {
         score,
         latency: fmtSeconds(mean(mine.map((r) => r.latency_ms))),
         tokens: String(mine.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0)),
         response: first.status === "ok" ? first.output_text : `Failed: ${first.error_message ?? "unknown error"}`,
         failed: mine.every((r) => r.status !== "ok"),
+        repeats: [...mine].sort((a, b) => a.repeat_index - b.repeat_index).map((r) => ({
+          index: r.repeat_index,
+          score: resultScore(r) === null ? null : round(resultScore(r)!),
+          latency: fmtSeconds(r.latency_ms),
+          tokens: r.input_tokens + r.output_tokens,
+          response: r.status === "ok" ? r.output_text : `Failed: ${r.error_message ?? "unknown error"}`,
+          failed: r.status !== "ok",
+        })),
       };
+      if (score !== null && score > bestScore) {
+        bestScore = score;
+        winners.length = 0;
+        winners.push(name);
+      } else if (score !== null && score === bestScore) {
+        winners.push(name);
+      }
     }
-    const scoreValues = Object.values(scores)
-      .map((s) => s.score)
-      .filter((v): v is number => v !== null);
-    const best = scoreValues.length ? Math.max(...scoreValues) : null;
-    const winners =
-      best === null
-        ? []
-        : Object.entries(scores)
-          .filter(([, s]) => s.score === best)
-          .map(([name]) => name);
     const bestModel = winners.length ? winners.join(" / ") : "—";
-    return { id: index + 1, input: rs[0].question_text, scores, bestModel };
+    return { id: index + 1, itemId: rs[0].item_id, input: rs[0].question_text, scores, bestModel };
   });
 
   const allScores = results.map(resultScore).filter((v): v is number => v !== null);
   const sumCost = results.reduce((a, r) => a + Number(r.cost_usd), 0);
-  const runCost = Number(run.total_cost_usd) || sumCost;
+  const runCost = results.length ? sumCost : Number(run.total_cost_usd) || 0;
+  const judgeCost = results.reduce((sum, r) => sum + r.judgments.reduce((total, judgment) => total + Number(judgment.judge_cost_usd), 0), 0);
   const totalTokens = results.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0);
   const created = new Date(run.created_at).getTime();
   const finished = run.finished_at ? new Date(run.finished_at).getTime() : null;
@@ -487,8 +506,13 @@ function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | n
     rubricDescription: rubric
       ? `${criteria.length ? `Criteria: ${criteria.join(", ")}. ` : ""}Judge scale ${min}–${max}, shown here as 0–100.`
       : undefined,
-    avgScore: allScores.length ? round(mean(allScores)) : 0,
-    totalCost: fmtUsd(runCost),
+    avgScore: allScores.length ? round(mean(allScores)) : undefined,
+    totalCost: fmtUsd(runCost + judgeCost),
+    judgeCost,
+    selectedModels: [...run.model_ids, ...orderedModelIds.filter((id) => !run.model_ids.includes(id))].map((id) => ({
+      id,
+      name: byModel.get(id)?.[0]?.model_display_name ?? models.find((model) => model.id === id)?.display_name ?? id,
+    })),
     totalTokens: fmtTokens(totalTokens),
     duration: finished !== null ? fmtDuration(finished - created) : isActive ? "In progress" : "—",
     errorMessage: run.error_message ?? run.error ?? run.failure_reason ?? undefined,
@@ -504,12 +528,17 @@ function buildRunData(run: ApiRun, results: ApiResult[], dataset: ApiDataset | n
 
 function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
-  const runId = resolvedParams.id;
+  return <RunResultsView key={resolvedParams.id} runId={resolvedParams.id} />;
+}
+
+function RunResultsView({ runId }: { runId: string }) {
 
   const [runData, setRunData] = useState<RunData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(subscribeToMount, mountedSnapshot, serverSnapshot);
+  const [liveState, setLiveState] = useState("Connecting to live updates…");
+  const [showCostReceipt, setShowCostReceipt] = useState(false);
 
   const [showModelsDropdown, setShowModelsDropdown] = useState(false);
   const [showRubricDropdown, setShowRubricDropdown] = useState(false);
@@ -522,46 +551,120 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
   const [selectedResponse, setSelectedResponse] = useState<SelectedResponse | null>(null);
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+    let pending = false;
+    let initialized = false;
 
-    async function fetchRunDetails(first: boolean) {
-      if (first) {
-        setLoading(true);
-        setError(null);
-      }
-      let nextPoll = false;
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
       try {
-        const run = await apiGet<ApiRun>(`/runs/${runId}`, controller.signal);
-        const [results, dataset, rubric] = await Promise.all([
-          fetchAllResults(runId, controller.signal),
-          apiGet<ApiDataset>(`/datasets/${run.dataset_id}`, controller.signal).catch(() => null),
-          apiGet<ApiRubric>(`/rubrics/${run.rubric_id}`, controller.signal).catch(() => null),
-        ]);
-        if (controller.signal.aborted) return;
-        setRunData(buildRunData(run, results, dataset, rubric));
-        setError(null);
-        nextPoll = run.status === "queued" || run.status === "running";
+        while (pending && !controller.signal.aborted) {
+          pending = false;
+          const run = await apiGet<ApiRun>(`/runs/${encodeURIComponent(runId)}`, controller.signal);
+          const [results, dataset, rubric, models] = await Promise.all([
+            fetchAllResults(encodeURIComponent(runId), controller.signal),
+            apiGet<ApiDataset>(`/datasets/${encodeURIComponent(run.dataset_id)}`, controller.signal).catch(() => null),
+            apiGet<ApiRubric>(`/rubrics/${encodeURIComponent(run.rubric_id)}`, controller.signal).catch(() => null),
+            apiGet<ApiModel[]>("/models", controller.signal).catch(() => []),
+          ]);
+          if (controller.signal.aborted) return;
+          setRunData(buildRunData(run, results, dataset, rubric, models));
+          initialized = true;
+          setLoading(false);
+          setError(null);
+        }
       } catch (err) {
         if (controller.signal.aborted) return;
-        if (first) setError(err instanceof Error ? err.message : "Something went wrong.");
-        else nextPoll = true; // transient failure while polling: try again
+        const message = err instanceof Error ? err.message : "Could not load results.";
+        if (!initialized) {
+          setError(message);
+          setLoading(false);
+        } else {
+          setLiveState(`${message} Retrying results…`);
+          pending = true;
+          refreshTimer = setTimeout(() => { void refresh(); }, 3000);
+        }
       } finally {
-        if (!controller.signal.aborted && first) setLoading(false);
-      }
-      if (nextPoll && !controller.signal.aborted) {
-        timer = setTimeout(() => fetchRunDetails(false), 3000);
+        refreshing = false;
       }
     }
-    // Fetch run details on mount, and poll every few seconds if the run is still active.
-    fetchRunDetails(true);
+
+    function requestRefresh() {
+      pending = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void refresh();
+    }
+
+    async function connect() {
+      let failures = 0;
+      while (!controller.signal.aborted) {
+        const started = Date.now();
+        try {
+          const response = await fetch(`${API_URL}/runs/${encodeURIComponent(runId)}/events`, {
+            headers: { ...authHeaders(), Accept: "text/event-stream" },
+            signal: controller.signal,
+            cache: "no-store",
+          });
+          if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+            throw new Error(`Live connection failed (${response.status}).`);
+          }
+          setLiveState("Live updates connected.");
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let terminal = false;
+          try {
+            while (!terminal) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const frames = buffer.split(/\r?\n\r?\n/);
+              buffer = frames.pop() ?? "";
+              for (const frame of frames) {
+                const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+                  .map((line) => line.slice(5).trimStart()).join("\n");
+                if (!data) continue;
+                const update = JSON.parse(data) as { run_id: string; status: string };
+                if (update.run_id !== runId) throw new Error("Received an update for a different run.");
+                requestRefresh();
+                terminal = ["completed", "failed", "cancelled"].includes(update.status);
+              }
+            }
+          } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+          }
+          if (terminal) {
+            setLiveState("Live updates finished.");
+            return;
+          }
+          throw new Error("Live connection closed.");
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          if (Date.now() - started > 30000) failures = 0;
+          const delay = Math.min(30000, 1000 * 2 ** Math.min(failures++, 5));
+          setLiveState(`${err instanceof Error ? err.message : "Live connection failed."} Reconnecting…`);
+          await new Promise<void>((resolve) => {
+            const finish = () => {
+              controller.signal.removeEventListener("abort", finish);
+              resolve();
+            };
+            retryTimer = setTimeout(finish, delay);
+            controller.signal.addEventListener("abort", finish, { once: true });
+          });
+        }
+      }
+    }
+    requestRefresh();
+    void connect();
     return () => {
       controller.abort();
-      if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
+      if (refreshTimer) clearTimeout(refreshTimer);
     };
   }, [runId]);
 
@@ -580,6 +683,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setSelectedResponse(null);
+        setShowCostReceipt(false);
         setShowModelsDropdown(false);
         setShowRubricDropdown(false);
         setShowDownloadMenu(false);
@@ -591,20 +695,23 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
 
   const modelsSummary = useMemo(() => runData?.modelsSummary || [], [runData]);
   const detailedResults = useMemo(() => runData?.detailedResults || [], [runData]);
+  const selectedItem = detailedResults.find((item) => item.itemId === selectedResponse?.itemId);
+  const selectedModel = modelsSummary.find((model) => model.id === selectedResponse?.modelId);
+  const selectedData = selectedItem && selectedModel ? selectedItem.scores[selectedModel.id] : undefined;
 
   const chartData = useMemo(() => {
-    return modelsSummary.map((m) => ({
+    return modelsSummary.filter((m) => activeTab !== "Score" || m.scoredCount > 0).map((m) => ({
       name: m.model,
       value: Number(activeTab === "Score" ? m.meanScore : activeTab === "Cost" ? m.costVal : m.latencyVal) || 0,
     }));
   }, [modelsSummary, activeTab]);
 
   const avgScore = useMemo(() => {
-    if (!runData) return 0;
-    if (modelsSummary.length === 0) return runData.avgScore ?? 0;
-    const sum = modelsSummary.reduce((acc, m) => acc + m.meanScore, 0);
-    return Math.round((sum / modelsSummary.length) * 10) / 10;
-  }, [runData, modelsSummary]);
+    const scored = modelsSummary.filter((model) => model.scoredCount > 0);
+    if (!scored.length) return null;
+    const sum = scored.reduce((acc, model) => acc + model.meanScore, 0);
+    return Math.round((sum / scored.length) * 10) / 10;
+  }, [modelsSummary]);
 
   const handleDownload = (format: "csv" | "json") => {
     if (!runData) return;
@@ -665,7 +772,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
       <main className="min-w-0 px-4 pb-8 pt-20 sm:ml-64 sm:px-8">
         {isActive && (
           <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
-            This run is {runData.status}. Results update automatically every few seconds.
+            This run is {runData.status}. {liveState}
           </div>
         )}
         {isFailed && (
@@ -687,8 +794,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
         {runData.failedCount > 0 && (
           <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
             <p>
-              {runData.failedCount} of {runData.resultCount} model calls failed, so those results have no tokens,
-              cost or score.
+              {runData.failedCount} of {runData.resultCount} model calls failed. Saved usage is included in the totals.
             </p>
             {runData.resultErrors.length > 0 && (
               <ul className="mt-1 list-disc pl-5 text-xs text-rose-200/90">
@@ -707,6 +813,12 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowCostReceipt(true)}
+              className="flex items-center gap-2 rounded-lg border border-[#233266] bg-[#0c1636] px-4 py-2 text-sm text-slate-200 hover:bg-[#12204c]"
+            >
+              <DollarSign size={15} /> View Cost Details
+            </button>
             <div className="relative z-30" ref={downloadRef}>
               <button
                 onClick={() => setShowDownloadMenu((v) => !v)}
@@ -867,7 +979,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
             icon={<Trophy size={18} />}
             iconClass="bg-amber-500/10 text-amber-400"
             label="Average Score"
-            value={avgScore}
+            value={avgScore ?? "—"}
             suffix="/ 100"
           >
             <ChangeBadge value={runData.changes?.avgScore} goodWhenUp />
@@ -968,7 +1080,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
                 </thead>
                 <tbody className="divide-y divide-[#162248] text-slate-200">
                   {modelsSummary.map((m) => (
-                    <tr key={m.model} className="hover:bg-[#101c42]/50 transition-colors">
+                    <tr key={m.id} className="hover:bg-[#101c42]/50 transition-colors">
                       <td className="py-3 font-medium text-white">{m.model}</td>
                       <td className="py-3 text-center font-bold text-emerald-400">
                         {m.scoredCount > 0 ? m.meanScore : "—"}
@@ -993,7 +1105,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
           <QualityScatter
             title="Cost vs Quality"
             icon={<DollarSign size={16} className="text-blue-400" />}
-            models={modelsSummary}
+            models={modelsSummary.filter((model) => model.scoredCount > 0)}
             xName="Cost"
             xUnit="$"
             getX={(m) => m.costVal}
@@ -1002,7 +1114,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
           <QualityScatter
             title="Latency vs Quality"
             icon={<Zap size={16} className="text-cyan-400" />}
-            models={modelsSummary}
+            models={modelsSummary.filter((model) => model.scoredCount > 0)}
             xName="Latency"
             xUnit="s"
             getX={(m) => m.latencyVal}
@@ -1025,7 +1137,7 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
                   <th className="pb-3 w-10">#</th>
                   <th className="pb-3 font-medium">Input Prompt</th>
                   {modelsSummary.map((m) => (
-                    <th key={m.model} className="pb-3 font-medium">
+                    <th key={m.id} className="pb-3 font-medium">
                       {m.model}
                     </th>
                   ))}
@@ -1043,9 +1155,9 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
                     </td>
 
                     {modelsSummary.map((m) => {
-                      const resData = item.scores?.[m.model];
+                      const resData = item.scores?.[m.id];
                       return (
-                        <td key={m.model} className="py-4 pr-3">
+                        <td key={m.id} className="py-4 pr-3">
                           {resData ? (
                             <div className="flex items-center gap-2">
                               {resData.failed ? (
@@ -1064,9 +1176,8 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
                               <button
                                 onClick={() =>
                                   setSelectedResponse({
-                                    model: m.model,
-                                    prompt: item.input,
-                                    data: resData,
+                                    itemId: item.itemId,
+                                    modelId: m.id,
                                   })
                                 }
                                 className="rounded border border-[#223062] px-2 py-1 text-[11px] text-blue-300 hover:bg-[#3347e0] hover:text-white transition-all"
@@ -1094,7 +1205,51 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
             {detailedResults.length === 0 && <EmptyState text="No results available for this run." className="py-12" />}
           </div>
         </div>
+        <section className={`${panel} mt-6`} aria-labelledby="model-responses-title">
+          <h2 id="model-responses-title" className="mb-4 flex items-center gap-2 text-sm font-semibold text-white">
+            <FileText size={18} className="text-blue-400" /> Model Responses
+          </h2>
+          {detailedResults.length === 0 ? (
+            <EmptyState text="Model responses will appear here as they arrive." className="py-12" />
+          ) : detailedResults.map((item) => (
+            <div key={item.itemId} className="mb-5 last:mb-0">
+              <p className="mb-3 text-sm text-slate-200">{item.input}</p>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {modelsSummary.map((model) => {
+                  const result = item.scores[model.id];
+                  if (!result) return null;
+                  return (
+                    <article key={model.id} className="rounded-lg border border-[#223062] bg-[#091129] p-4">
+                      <h3 className="text-sm font-medium text-white">{model.model}</h3>
+                      {result.repeats.map((repeat) => (
+                        <div key={repeat.index} className="mt-3 border-t border-[#1b2750] pt-3">
+                          <p className="text-xs text-slate-400">Repeat {repeat.index + 1}{repeat.failed ? " · Failed" : ""}</p>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200">{repeat.response}</p>
+                          <p className="mt-2 text-xs text-slate-400">
+                            Score {repeat.score === null ? "pending or unavailable" : `${repeat.score}/100`} · {repeat.latency} · {repeat.tokens.toLocaleString()} tokens
+                          </p>
+                        </div>
+                      ))}
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </section>
       </main>
+
+      {showCostReceipt && (
+        <CostReceipt
+          runName={runData.name}
+          models={runData.selectedModels.map((model) => {
+            const summary = modelsSummary.find((item) => item.id === model.id);
+            return { ...model, tokens: summary?.tokenCount ?? 0, cost: summary?.costVal ?? 0 };
+          })}
+          judgeCost={runData.judgeCost}
+          onClose={() => setShowCostReceipt(false)}
+        />
+      )}
 
       {selectedResponse && (
         <div
@@ -1105,12 +1260,12 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="response-modal-title"
-            className="w-full max-w-lg rounded-xl border border-[#1b2750] bg-[#0b132b] p-6 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-[#1b2750] bg-[#0b132b] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[#1b2750] pb-3">
               <h3 id="response-modal-title" className="font-semibold text-white">
-                {selectedResponse.model} Response Details
+                {selectedModel?.model ?? "Model"} Response Details
               </h3>
               <button
                 onClick={() => setSelectedResponse(null)}
@@ -1121,36 +1276,22 @@ function RunResultsContent({ params }: { params: Promise<{ id: string }> }) {
               </button>
             </div>
             {/* Prompt and model output details */}
-            <div className="mt-4 space-y-3 text-xs">
+            {selectedItem && selectedData ? <div className="mt-4 space-y-3 text-xs">
               <div>
                 <span className="text-slate-400 block font-medium mb-1">Prompt:</span>
                 <p className="bg-[#060b1f] p-2.5 rounded border border-[#1b2750] text-slate-200">
-                  {selectedResponse.prompt}
+                  {selectedItem.input}
                 </p>
               </div>
 
-              <div>
-                <span className="text-slate-400 block font-medium mb-1">Model Output:</span>
-                <p className="bg-[#060b1f] p-2.5 rounded border border-[#1b2750] text-slate-200 leading-relaxed whitespace-pre-wrap">
-                  {selectedResponse.data.response}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-4 text-slate-400 pt-2 border-t border-[#1b2750]">
-                <span>
-                  Score:{" "}
-                  <strong className="text-emerald-400">
-                    {selectedResponse.data.score === null ? "—" : `${selectedResponse.data.score}/100`}
-                  </strong>
-                </span>
-                <span>
-                  Latency: <strong className="text-white">{selectedResponse.data.latency}</strong>
-                </span>
-                <span>
-                  Tokens: <strong className="text-white">{selectedResponse.data.tokens}</strong>
-                </span>
-              </div>
-            </div>
+              {selectedData.repeats.map((repeat) => (
+                <div key={repeat.index} className="border-t border-[#1b2750] pt-3">
+                  <p className="mb-2 text-slate-400">Repeat {repeat.index + 1}{repeat.failed ? " · Failed" : ""}</p>
+                  <p className="whitespace-pre-wrap break-words rounded border border-[#1b2750] bg-[#060b1f] p-2.5 text-slate-200">{repeat.response}</p>
+                  <p className="mt-2 text-slate-400">Score {repeat.score === null ? "pending or unavailable" : `${repeat.score}/100`} · {repeat.latency} · {repeat.tokens.toLocaleString()} tokens</p>
+                </div>
+              ))}
+            </div> : <p className="mt-4 text-sm text-slate-400">Response unavailable.</p>}
           </div>
         </div>
       )}

@@ -202,33 +202,31 @@ async def _run_models(session, context: RunContext) -> Decimal:
         nonlocal total_cost
         async with sem:
             response = await client.complete(job.spec, job.prompt, policy, temperature, _CANDIDATE_MAX_TOKENS)
-            calls: list = []
+            fields = _result_fields(response)
+            async with db_lock:  # AsyncSession is shared by the concurrent jobs.
+                result = Result(
+                    run_id=run_id,
+                    item_id=job.item_id,
+                    model_id=job.model_id,
+                    repeat_index=job.repeat_index,
+                    **fields,
+                )
+                session.add(result)
+                await session.flush()
+                result_id = result.id
+                total_cost += fields["cost_usd"]
+                run = await session.get(Run, run_id)
+                run.total_cost_usd = total_cost
+                await session.commit()
+
             if response.status is CallStatus.ok:
                 calls = await _judge_calls(
-                    client,
-                    judge_spec,
-                    rubric,
-                    policy,
-                    job.prompt,
-                    job.expected,
-                    response.output_text,
-                    swap_order,
+                    client, judge_spec, rubric, policy, job.prompt, job.expected,
+                    response.output_text, swap_order,
                 )
-
-        fields = _result_fields(response)
-        async with db_lock:  # one DB writer at a time
-            result = Result(
-                run_id=run_id,
-                item_id=job.item_id,
-                model_id=job.model_id,
-                repeat_index=job.repeat_index,
-                **fields,
-            )
-            session.add(result)
-            await session.flush()
-            _add_judgments(session, judge_model_id, result.id, calls)
-            await session.commit()  # progress is visible right away in the UI
-            total_cost += fields["cost_usd"]
+                async with db_lock:
+                    _add_judgments(session, judge_model_id, result_id, calls)
+                    await session.commit()
 
     tasks = [asyncio.create_task(process(job)) for job in jobs]
     try:
