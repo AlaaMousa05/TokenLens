@@ -40,7 +40,6 @@ def test_producer_and_worker_use_the_same_external_connection():
     )
     script = """
 import asyncio
-from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 from app.services import run_service
@@ -54,12 +53,7 @@ async def check():
         assert producer.conn_timeout == 10
         assert producer.conn_retries == 10
         assert producer.conn_retry_delay == 2
-        assert replace(
-            producer,
-            conn_timeout=worker.conn_timeout,
-            conn_retries=worker.conn_retries,
-            conn_retry_delay=worker.conn_retry_delay,
-        ) == worker
+        assert producer == worker
         assert producer.host == "redis.example.com"
         assert producer.password == "pass@word"
         assert producer.ssl and producer.ssl_check_hostname
