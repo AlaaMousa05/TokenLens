@@ -38,7 +38,7 @@ docker compose up --build
    ```powershell
    cd backend
    python -m pip install -r requirements.txt
-   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
    ```
 
 4. In a separate PowerShell terminal, start the worker from the same
@@ -54,6 +54,18 @@ does not launch a worker process. The API and worker must use the same Redis
 instance, database, and provider credentials. Check `http://127.0.0.1:8000/health`
 for Redis and database connectivity. Services running on Render in the same
 region can use the Key Value internal URL instead.
+
+The API logs startup and shutdown, HTTP method, route template, status and
+duration, and run enqueue outcomes. It does not include request bodies,
+credentials, query strings, or actual path parameters in these logs. Keep
+Uvicorn's access log disabled (`--no-access-log`) when using another launch
+command to avoid duplicate logs and raw URLs.
+
+The worker logs its process ID at startup and shutdown, job and run IDs,
+model-call and judging progress, statuses, and failures. To follow the API and
+worker logs when using Docker Compose, run `docker compose logs -f backend worker`.
+Application progress logs omit prompts, responses, and credentials; framework
+exception logs and external logging systems may have different contents.
 
 Docker Compose continues to use the root `.env` and local Redis by default.
 If you set its `REDIS_URL` to the external URL, both containers use it, although

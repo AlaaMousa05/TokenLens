@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -30,12 +32,22 @@ from evaluation.judging.guards import ensure_judge_not_judged
 from evaluation.judging.judge import Judge
 from evaluation.judging.rubric import Criterion
 from evaluation.judging.rubric import Rubric as EvaluationRubric
+from evaluation.judging.verdict import JudgmentStatus
 from evaluation.execution.caching_client import CacheStats
 from evaluation.measurement.usage import UsageRecorder
 from evaluation.providers.resolver import resolve_client
 from evaluation.registry import get_model_by_name
 
 _CANDIDATE_MAX_TOKENS = 512
+logger = logging.getLogger("arq.tokenlens.worker")
+
+
+async def on_startup(ctx: dict) -> None:
+    logger.info("Worker started pid=%s", os.getpid())
+
+
+async def on_shutdown(ctx: dict) -> None:
+    logger.info("Worker stopped pid=%s", os.getpid())
 
 
 @dataclass
@@ -127,9 +139,18 @@ async def _score_result(
     second call measures judge noise (repeat-scoring variance), not position bias.
     """
     for order_variant in range(2 if swap_order else 1):
+        logger.info(
+            "Judging started run_id=%s result_id=%s judge_model_id=%s variant=%s",
+            result.run_id, result.id, judge_model_id, order_variant,
+        )
         cost_before = judge_recorder.total_cost
         judgment = await judge.score(policy, question, reference, result.output_text)
         judge_cost = judge_recorder.total_cost - cost_before
+        log = logger.info if judgment.status is JudgmentStatus.ok else logger.warning
+        log(
+            "Judging finished run_id=%s result_id=%s judge_model_id=%s variant=%s status=%s attempts=%s",
+            result.run_id, result.id, judge_model_id, order_variant, judgment.status.value, judgment.attempts,
+        )
         criteria_scores = (
             {name: verdict.score for name, verdict in judgment.verdict.scores.items()} if judgment.verdict else {}
         )
@@ -150,7 +171,16 @@ async def _score_result(
 async def _generate_and_persist_result(
     session, client: ModelClient, spec: ModelSpec, run: Run, model_row: Model, item: DatasetItem, repeat_index: int, policy: str
 ) -> Result:
+    logger.info(
+        "Model call started run_id=%s model_id=%s item_id=%s repeat=%s",
+        run.id, model_row.id, item.id, repeat_index,
+    )
     response = await client.complete(spec, item.input_prompt, policy, float(run.temperature), _CANDIDATE_MAX_TOKENS)
+    log = logger.info if response.status is CallStatus.ok else logger.warning
+    log(
+        "Model call finished run_id=%s model_id=%s item_id=%s repeat=%s status=%s attempts=%s latency_ms=%s",
+        run.id, model_row.id, item.id, repeat_index, response.status.value, response.attempts, response.latency_ms,
+    )
     result = Result(
         run_id=run.id,
         item_id=item.id,
@@ -173,6 +203,10 @@ async def _run_models(session, context: RunContext) -> Decimal:
     judge = Judge(judge_recorder, judge_spec, _build_rubric(context.rubric_row))
     policy = context.dataset.description or ""
     total_cost = Decimal("0")
+    logger.info(
+        "Evaluation configuration loaded run_id=%s models=%s items=%s repeats=%s judge_model_id=%s",
+        context.run.id, len(context.model_rows), len(context.items), context.run.repeats, context.judge_model_row.id,
+    )
 
     for model_row in context.model_rows:
         spec = specs[model_row.id]
@@ -199,14 +233,17 @@ async def _run_models(session, context: RunContext) -> Decimal:
 
 
 async def run_evaluation(ctx: dict, run_id: str) -> None:
+    logger.info("Evaluation job received run_id=%s job_id=%s", run_id, ctx.get("job_id"))
     dbconfig._ensure_session_factory()
     async with dbconfig.SessionLocal() as session:
         run = await session.get(Run, uuid.UUID(run_id))
         if run is None:
+            logger.error("Evaluation run not found run_id=%s", run_id)
             raise ValueError(f"Run {run_id} not found.")
 
         run.status = RunStatus.RUNNING
         await session.commit()
+        logger.info("Evaluation started run_id=%s", run_id)
 
         try:
             context = await _load_run_context(session, run)
@@ -214,7 +251,9 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
             run.status = RunStatus.COMPLETED
             run.total_cost_usd = total_cost
             await session.commit()
+            logger.info("Evaluation completed run_id=%s candidate_cost_usd=%s", run_id, total_cost)
         except Exception as exc:
+            logger.error("Evaluation failed run_id=%s error_type=%s", run_id, type(exc).__name__)
             await session.rollback()
             run = await session.get(Run, uuid.UUID(run_id))
             run.status = RunStatus.FAILED
@@ -225,5 +264,7 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
 
 class WorkerSettings:
     functions = [run_evaluation]
+    on_startup = on_startup
+    on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url(settings.redis_url)
     max_jobs = 10
