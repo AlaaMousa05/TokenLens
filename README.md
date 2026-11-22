@@ -21,6 +21,9 @@ An impartial AI judge scores every answer, and the cost, speed and quality of ea
 
 </div>
 
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/ae95b34b-6f3b-43b0-ab1c-4999bb9a92ea" />
+
+
 ---
 
 ## 📌 The Problem
