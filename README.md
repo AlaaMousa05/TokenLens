@@ -6,6 +6,9 @@ results, and tracking cost. This repo holds the full stack: a Next.js
 frontend and a FastAPI backend with a Redis-backed job queue (ARQ) for
 running evaluations in the background and Postgres for persistent data.
 
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/667fbe4f-3615-47ac-b45d-d510d7078ba5" />
+
+
 
 ## Running it
 
