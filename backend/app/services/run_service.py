@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -25,6 +26,9 @@ from app.models.entities import (
 from app.services.rubric_service import freeze_rubric, validate_rubric_values
 
 
+logger = logging.getLogger("uvicorn.error.tokenlens")
+
+
 class RunValidationError(Exception):
     pass
 
@@ -42,9 +46,6 @@ async def _get_redis_pool() -> Any:
     global _redis_pool
     if _redis_pool is None:
         rs = redis_settings_from_url(settings.redis_url)
-        rs.conn_timeout = 10
-        rs.conn_retries = 10
-        rs.conn_retry_delay = 2
         _redis_pool = await arq.create_pool(rs)
     return _redis_pool
 
@@ -118,11 +119,20 @@ async def create_run(
         await session.rollback()
         raise
 
+    logger.info("Run persisted run_id=%s", run.id)
     await session.refresh(run)
     await freeze_rubric(session, rubric_id)
 
-    pool = await _get_redis_pool()
-    await pool.enqueue_job("run_evaluation", str(run.id))
+    try:
+        pool = await _get_redis_pool()
+        job = await pool.enqueue_job("run_evaluation", str(run.id))
+    except Exception:
+        logger.error("Run enqueue failed run_id=%s", run.id)
+        raise
+    if job is None:
+        logger.warning("Run enqueue returned no job run_id=%s", run.id)
+    else:
+        logger.info("Run enqueued run_id=%s", run.id)
 
     return RunWithModels(run=run, model_ids=model_ids)
 

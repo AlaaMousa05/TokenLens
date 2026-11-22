@@ -40,7 +40,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
 
   # Same build context/image as backend — only the command differs. No
   # separate worker Dockerfile; see backend/Dockerfile's CMD comment.

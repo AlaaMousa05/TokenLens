@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.dbconfig as dbconfig
 from app.controllers.auth_controller import get_current_user
 from app.dbconfig import get_db_session
-from app.models.entities import User
+from app.models.entities import Judgment, Result, RunStatus, User
 from app.schemas.auth_schema import ErrorResponse
 from app.schemas.run_schema import (
     JudgmentForResult,
@@ -42,6 +47,7 @@ def _to_run_public(run, model_ids: list[uuid.UUID]) -> RunPublic:
         swap_order=run.swap_order,
         status=run.status,
         total_cost_usd=run.total_cost_usd,
+        error_message=run.error_message,
         created_at=run.created_at,
         finished_at=run.finished_at,
         model_ids=model_ids,
@@ -108,6 +114,54 @@ async def get_run_endpoint(
     if run_with_models is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     return _to_run_public(run_with_models.run, run_with_models.model_ids)
+
+
+@router.get("/{run_id}/events", responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
+async def stream_run_events(
+    run_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> StreamingResponse:
+    if await get_user_run(session, current_user.id, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    user_id = current_user.id
+    await session.rollback()
+
+    async def events():
+        previous = None
+        while True:
+            async with dbconfig.SessionLocal() as stream_session:
+                run_with_models = await get_user_run(stream_session, user_id, run_id)
+                if run_with_models is None:
+                    return
+                run = run_with_models.run
+                result_count = await stream_session.scalar(
+                    select(func.count()).select_from(Result).where(Result.run_id == run_id)
+                )
+                judgment_count = await stream_session.scalar(
+                    select(func.count()).select_from(Judgment)
+                    .join(Result, Judgment.result_id == Result.id).where(Result.run_id == run_id)
+                )
+                update = {
+                    "run_id": str(run_id),
+                    "status": run.status.value,
+                    "total_cost_usd": str(run.total_cost_usd),
+                    "result_count": result_count,
+                    "judgment_count": judgment_count,
+                }
+            if update != previous:
+                yield f"event: update\ndata: {json.dumps(update)}\n\n"
+                previous = update
+            else:
+                yield ": keep-alive\n\n"
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+                return
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get(

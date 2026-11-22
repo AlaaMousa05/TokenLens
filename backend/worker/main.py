@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +34,7 @@ from evaluation.judging.guards import ensure_judge_not_judged
 from evaluation.judging.judge import Judge
 from evaluation.judging.rubric import Criterion
 from evaluation.judging.rubric import Rubric as EvaluationRubric
+from evaluation.judging.verdict import JudgmentStatus
 from evaluation.execution.caching_client import CacheStats
 from evaluation.measurement.usage import UsageRecorder
 from evaluation.providers.resolver import resolve_client
@@ -39,6 +42,15 @@ from evaluation.registry import get_model_by_name
 
 _CANDIDATE_MAX_TOKENS = 512
 _CONCURRENCY = 2 # Limit concurrent tasks to 2.
+logger = logging.getLogger("arq.tokenlens.worker")
+
+
+async def on_startup(ctx: dict) -> None:
+    logger.info("Worker started pid=%s", os.getpid())
+
+
+async def on_shutdown(ctx: dict) -> None:
+    logger.info("Worker stopped pid=%s", os.getpid())
 
 
 @dataclass
@@ -197,38 +209,40 @@ async def _run_models(session, context: RunContext) -> Decimal:
     sem = asyncio.Semaphore(_CONCURRENCY)
     db_lock = asyncio.Lock()  # AsyncSession is not safe for concurrent use
     total_cost = Decimal("0")
+    logger.info(
+        "Evaluation configuration loaded run_id=%s models=%s items=%s repeats=%s judge_model_id=%s",
+        context.run.id, len(context.model_rows), len(context.items), context.run.repeats, context.judge_model_row.id,
+    )
 
     async def process(job: _Job) -> None:
         nonlocal total_cost
         async with sem:
             response = await client.complete(job.spec, job.prompt, policy, temperature, _CANDIDATE_MAX_TOKENS)
-            calls: list = []
+            fields = _result_fields(response)
+            async with db_lock:  # AsyncSession is shared by the concurrent jobs.
+                result = Result(
+                    run_id=run_id,
+                    item_id=job.item_id,
+                    model_id=job.model_id,
+                    repeat_index=job.repeat_index,
+                    **fields,
+                )
+                session.add(result)
+                await session.flush()
+                result_id = result.id
+                total_cost += fields["cost_usd"]
+                run = await session.get(Run, run_id)
+                run.total_cost_usd = total_cost
+                await session.commit()
+
             if response.status is CallStatus.ok:
                 calls = await _judge_calls(
-                    client,
-                    judge_spec,
-                    rubric,
-                    policy,
-                    job.prompt,
-                    job.expected,
-                    response.output_text,
-                    swap_order,
+                    client, judge_spec, rubric, policy, job.prompt, job.expected,
+                    response.output_text, swap_order,
                 )
-
-        fields = _result_fields(response)
-        async with db_lock:  # one DB writer at a time
-            result = Result(
-                run_id=run_id,
-                item_id=job.item_id,
-                model_id=job.model_id,
-                repeat_index=job.repeat_index,
-                **fields,
-            )
-            session.add(result)
-            await session.flush()
-            _add_judgments(session, judge_model_id, result.id, calls)
-            await session.commit()  # progress is visible right away in the UI
-            total_cost += fields["cost_usd"]
+                async with db_lock:
+                    _add_judgments(session, judge_model_id, result_id, calls)
+                    await session.commit()
 
     tasks = [asyncio.create_task(process(job)) for job in jobs]
     try:
@@ -243,14 +257,17 @@ async def _run_models(session, context: RunContext) -> Decimal:
 
 
 async def run_evaluation(ctx: dict, run_id: str) -> None:
+    logger.info("Evaluation job received run_id=%s job_id=%s", run_id, ctx.get("job_id"))
     dbconfig._ensure_session_factory()
     async with dbconfig.SessionLocal() as session:
         run = await session.get(Run, uuid.UUID(run_id))
         if run is None:
+            logger.error("Evaluation run not found run_id=%s", run_id)
             raise ValueError(f"Run {run_id} not found.")
 
         run.status = RunStatus.RUNNING
         await session.commit()
+        logger.info("Evaluation started run_id=%s", run_id)
 
         try:
             context = await _load_run_context(session, run)
@@ -260,7 +277,9 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
             run.total_cost_usd = total_cost
             run.finished_at = datetime.now(timezone.utc)
             await session.commit()
+            logger.info("Evaluation completed run_id=%s candidate_cost_usd=%s", run_id, total_cost)
         except Exception as exc:
+            logger.error("Evaluation failed run_id=%s error_type=%s", run_id, type(exc).__name__)
             await session.rollback()
             run = await session.get(Run, uuid.UUID(run_id))
             run.status = RunStatus.FAILED
@@ -272,6 +291,8 @@ async def run_evaluation(ctx: dict, run_id: str) -> None:
 
 class WorkerSettings:
     functions = [run_evaluation]
+    on_startup = on_startup
+    on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url(settings.redis_url)
     max_jobs = 10
     job_timeout = 3600

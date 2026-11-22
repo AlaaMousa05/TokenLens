@@ -7,6 +7,9 @@ from arq.connections import RedisSettings
 
 def redis_settings_from_url(url: str) -> RedisSettings:
     redis_settings = RedisSettings.from_dsn(url)
+    redis_settings.conn_timeout = 10
+    redis_settings.conn_retries = 10
+    redis_settings.conn_retry_delay = 2
     if redis_settings.username is not None:
         redis_settings.username = unquote(redis_settings.username)
     if redis_settings.password is not None:

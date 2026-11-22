@@ -19,6 +19,8 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    event,
+    inspect,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -68,3 +70,16 @@ class Result(Base):
     item: Mapped["DatasetItem"] = relationship(back_populates="results")
     model: Mapped["Model"] = relationship(back_populates="results")
     judgments: Mapped[list["Judgment"]] = relationship(back_populates="result", passive_deletes="all")
+
+
+@event.listens_for(Result, "after_insert")
+@event.listens_for(Result, "after_update")
+@event.listens_for(Result, "after_delete")
+def _result_changed(mapper, connection, target):
+    from app.models.run import Run
+
+    history = inspect(target).attrs.run_id.history
+    run_ids = {target.run_id, *history.deleted}
+    connection.execute(
+        Run.__table__.update().where(Run.id.in_(run_ids)).values(update_version=Run.update_version + 1)
+    )
