@@ -322,6 +322,6 @@ TokenLens/
 |---|---|
 | **Alaa Mousa** | Team Lead · AI Engineer · Backend |
 | **Mohammad Taha** | Backend Engineer |
-| **Nadeen** | Frontend Engineer |
+| **Nadeen Abu Hilweh** | Frontend Engineer |
 | **Tharaa Sukaina** | Frontend Engineer |
 
